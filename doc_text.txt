@@ -1,0 +1,559 @@
+WAYMARK – THIẾT KẾ BACKEND, API VÀ DATABASE
+Tài liệu bàn giao kỹ thuật cho đội backend
+Phiên bản
+v1.0
+Mục tiêu
+Định nghĩa kiến trúc backend, API, dữ liệu lõi và chiến lược mở rộng nhiều user cho Waymark.
+Waymark là ứng dụng lưu giữ và khám phá kỷ niệm gắn với địa điểm thật, lấy bản đồ làm bề mặt nội dung chính thay vì feed chữ truyền thống.
+Đề xuất kiến trúc ưu tiên triển khai nhanh giai đoạn đầu bằng modular monolith tách module rõ ràng, kết hợp job queue và event-driven cho các tác vụ nặng. Khi tăng trưởng, từng module có thể tách thành service độc lập mà không phá vỡ hợp đồng API.
+Tài liệu này giả định sản phẩm có mobile app iOS/Android, media lưu trên object storage, chat là tin nhắn 1-1 hoặc nhóm nhỏ, và phạm vi hiện tại chưa bao gồm live streaming.
+[Chưa xác minh] 
+Một số quyết định như retention của chat, yêu cầu pháp lý theo quốc gia, anti-spam policy và mức độ real-time của map chưa có trong brief nên đang được đề xuất theo thông lệ sản phẩm xã hội dựa trên vị trí.
+1. Tóm tắt điều hành
+2. Nguyên tắc kiến trúc
+3. Kiến trúc backend đề xuất
+4. Thành phần hạ tầng
+5. Luồng nghiệp vụ chính
+6. Thiết kế API
+7. Thiết kế database
+8. Chỉ mục, phân vùng và scale
+9. Bảo mật, riêng tư và moderation
+10. Lộ trình triển khai
+1. Tóm tắt điều hành
+[Tổng hợp] 
+Yêu cầu sản phẩm nhấn mạnh 5 nguyên tắc: map first, memory first, nearby first, low friction và layered discovery. Vì vậy backend phải giải quyết tốt ba bài toán lõi: nội dung gắn với vị trí-thời gian, truy vấn nearby tốc độ cao và phân tầng riêng tư/quan hệ xã hội.
+Phương án phù hợp nhất cho giai đoạn 0 → 1 triệu user đăng ký là:
+• PostgreSQL + PostGIS làm source of truth cho user, memory, social graph, place, privacy và geospatial query.
+• Redis cho cache, session, rate limit, feed candidates ngắn hạn và pub/sub nhẹ.
+• Object storage + CDN cho ảnh/video; metadata của media nằm trong PostgreSQL.
+• Message broker/job queue cho notification, media processing, resurfacing, analytics, chống spam và fan-out event.
+• OpenSearch/Elasticsearch là tùy chọn phase 2 cho full-text caption, place search nâng cao và ranking chuyên sâu; chưa bắt buộc ở MVP.
+2. Nguyên tắc kiến trúc
+Nguyên tắc
+Hàm ý kỹ thuật
+Map-first domain model
+Mọi memory bắt buộc có geolocation, place snapshot hoặc geohash; mọi truy vấn home phải ưu tiên theo không gian trước rồi mới tới social/trending.
+Privacy-first read path
+Cùng một vùng địa lý nhưng user chỉ thấy memory phù hợp với public, friends hoặc private theo quan hệ tại thời điểm đọc.
+Write nhẹ, read tối ưu
+Tạo memory phải ít bước; các tính toán nặng như clustering, reverse geocoding, media transcoding, trending score, resurfacing và notification đẩy sang async.
+Single source of truth rõ ràng
+Không cho phép dữ liệu vị trí nằm rải rác không chuẩn hóa; cần tách snapshot hiển thị khỏi place canonical để tránh thay đổi dữ liệu lịch sử.
+Scale bằng tách nóng
+Các phần có profile tải khác nhau như chat, media và notification phải có ranh giới module rõ để tách khỏi core app khi cần.
+3. Kiến trúc backend đề xuất
+3.1 Kiểu kiến trúc
+[Sáng tạo mới] 
+Khuyến nghị triển khai theo mô hình modular monolith + asynchronous workers trong 2 phase đầu. Toàn bộ API công khai đi qua một API Gateway/BFF, nhưng code backend chia theo domain module độc lập, mỗi module có service layer, repository layer, event contract và migration riêng.
+Các module lõi:
+• Identity & Auth
+• User Profile & Social Graph
+• Place & Geo Index
+• Memories & Media
+• Feed/Discovery
+• Chat
+• Engagement (like/comment/share/save/report/block)
+• Notifications
+• Collections/Drafts/Resurfacing
+• Moderation & Trust/Safety
+• Admin & Analytics Export
+3.2 Sơ đồ logic
+Lớp
+Trách nhiệm
+Mobile App
+Map UI, camera, chat UI, profile, notification center
+API Gateway / BFF
+JWT verification, request shaping, versioning, rate limit, edge auth, aggregation response cho mobile
+Core App Service
+Auth, users, memories, places, social graph, comments, likes, collections, drafts
+Realtime Service
+WebSocket hoặc managed realtime channel cho chat, typing, online state, notification badge
+Async Workers
+Media processing, OCR/metadata extraction nếu cần, push notification, resurfacing, ranking materialization, geo-cluster cache
+Data Layer
+PostgreSQL/PostGIS, Redis, object storage, search index tùy chọn, broker/queue
+[Sáng tạo mới] 
+Nếu team muốn đi xa hơn về deploy độc lập, thứ tự tách service nên là: chat, notification, media pipeline, feed/discovery. Auth + user + memories + places vẫn nên ở cùng core service trong giai đoạn đầu để giảm distributed transaction.
+4. Thành phần hạ tầng
+Thành phần
+Bắt buộc
+Ghi chú
+PostgreSQL 16 + PostGIS
+Có
+Nguồn dữ liệu chính; hỗ trợ geography/geometry, ST_DWithin, ST_Distance, clustering, indexing theo GIST/SP-GiST.
+Redis
+Có
+Cache hot pins theo tile/geohash, session OTP tạm thời, rate limiting, unread counters.
+S3-compatible Object Storage
+Có
+Lưu ảnh/video gốc và bản tối ưu; key theo environment/user/time.
+CDN
+Có
+Phân phối media, thumbnail, signed URL.
+Queue/Broker
+Có
+RabbitMQ, Kafka hoặc SQS tùy stack; dùng cho job bất đồng bộ.
+Push Provider
+Có
+FCM/APNs cho mobile notification.
+Observability
+Có
+OpenTelemetry, logs tập trung, metrics, tracing, alerting, audit trail.
+Optional Search
+Phase 2
+OpenSearch/Elasticsearch cho caption/place search và ranking đặc biệt khi dữ liệu lớn.
+5. Luồng nghiệp vụ chính
+Luồng
+Xử lý backend
+Đăng ký/đăng nhập
+Client gửi email/sđt hoặc social token -> Auth module xác minh -> tạo/ghép account -> issue access token + refresh token -> emit event user.created hoặc user.logged_in.
+Mở map trang chủ
+Client gửi lat/lng, zoom, filter, privacy scope -> Discovery service query nearby candidate memories theo bounding box hoặc radius -> áp dụng privacy + block + geo ranking -> trả cluster/pin preview.
+Tạo memory
+Client upload media qua signed URL -> gọi create memory với caption, mood, location, timestamp, privacy -> DB ghi memory + media + place snapshot -> queue xử lý thumbnail/transcode/reverse geocode/notification/trending.
+Xem chi tiết memory
+Fetch memory detail -> kiểm tra privacy -> trả media, caption, place snapshot, counts, replies, related memories cùng địa điểm.
+Chat
+Tin nhắn đi qua realtime gateway -> persist message -> fan-out tới participants -> cập nhật conversation unread count.
+Resurfacing
+Worker chạy batch theo lịch -> tìm memory đủ điều kiện 1 năm trước hoặc revisit place -> tạo notification/resurfacing card materialized cho user.
+6. Thiết kế API
+[Sáng tạo mới] 
+Nên dùng REST/JSON cho phần lớn nghiệp vụ mobile, kết hợp WebSocket cho chat và trạng thái thời gian thực. API versioning theo /v1 và chuẩn hóa envelope response, pagination cursor, idempotency-key cho các lệnh tạo nội dung.
+Auth & Identity
+• POST /v1/auth/signup/email
+• POST /v1/auth/signup/phone
+• POST /v1/auth/verify-otp
+• POST /v1/auth/login/password
+• POST /v1/auth/login/social
+• POST /v1/auth/token/refresh
+• POST /v1/auth/password/forgot
+• POST /v1/auth/password/reset
+• POST /v1/auth/logout
+Home / Discovery
+• GET /v1/map/pins?lat=&lng=&radius=&zoom=&filter=&cursor=
+• GET /v1/map/clusters?bbox=&zoom=&filter=
+• GET /v1/memories/{memoryId}/preview
+• GET /v1/memories/{memoryId}
+• GET /v1/places/{placeId}/memories
+• GET /v1/discovery/trending/nearby
+Memory Creation
+• POST /v1/media/upload-url
+• POST /v1/memories
+• PATCH /v1/memories/{memoryId}
+• DELETE /v1/memories/{memoryId}
+• POST /v1/memories/{memoryId}/publish
+• POST /v1/drafts
+• PATCH /v1/drafts/{draftId}
+Engagement & Social
+• POST /v1/memories/{memoryId}/likes
+• DELETE /v1/memories/{memoryId}/likes
+• GET /v1/memories/{memoryId}/comments
+• POST /v1/memories/{memoryId}/comments
+• POST /v1/comments/{commentId}/replies
+• POST /v1/users/{userId}/follow
+• DELETE /v1/users/{userId}/follow
+• POST /v1/reports
+• POST /v1/blocks
+Profile & Library
+• GET /v1/me
+• PATCH /v1/me
+• GET /v1/me/memories?view=map|timeline|trip|region
+• GET /v1/me/stats
+• GET /v1/me/collections
+• POST /v1/collections
+• POST /v1/collections/{collectionId}/items
+Chat & Notification
+• GET /v1/conversations
+• POST /v1/conversations
+• GET /v1/conversations/{id}/messages
+• POST /v1/conversations/{id}/messages
+• GET /v1/notifications
+• POST /v1/notifications/read
+7. Thiết kế database
+[Sáng tạo mới] 
+Mô hình dữ liệu ưu tiên chuẩn hóa phần lõi, nhưng vẫn chấp nhận một số bảng materialized/counter để tối ưu read. Khóa chính nên dùng UUIDv7 hoặc ULID để vừa phân tán tốt vừa giữ tính tăng dần theo thời gian.
+7.1 Nhóm bảng chính
+Bảng
+Vai trò
+users
+Tài khoản gốc; trạng thái, thời điểm tạo, onboarding status.
+user_identities
+Danh tính đăng nhập: email, phone, Google, Apple, Facebook.
+user_profiles
+Thông tin hồ sơ hiển thị: avatar, bio, stats snapshot.
+user_settings
+Thiết lập quyền riêng tư, notification, map layer mặc định.
+user_relationships
+Follow/friend model; hỗ trợ trạng thái pending/accepted/blocked/muted.
+places
+Thực thể địa điểm canonical nếu hệ thống chuẩn hóa từ geocoder/POI.
+memory_place_snapshots
+Snapshot tên địa điểm, địa chỉ, lat/lng tại thời điểm đăng.
+memories
+Bài kỷ niệm lõi: owner, caption, mood, privacy, taken_at, visibility.
+memory_media
+Ảnh/video của memory; thứ tự, loại file, trạng thái xử lý.
+memory_tags
+Mood/tag preset hoặc custom tag ngắn.
+memory_engagement_counters
+Counter tách riêng cho like/comment/share/save để giảm contention.
+comments
+Bình luận và reply theo cây 2 cấp hoặc adjacency list.
+likes
+Lượt thích memory.
+saves
+Lưu memory vào collection hoặc save mặc định.
+collections
+Album do user tạo.
+collection_items
+Phần tử trong collection.
+drafts
+Bài nháp chưa publish.
+conversations
+Cuộc trò chuyện.
+conversation_participants
+Thành viên cuộc trò chuyện và unread state.
+messages
+Tin nhắn chat.
+notifications
+Thông báo đã materialize cho user.
+reports
+Báo cáo vi phạm.
+blocks
+Chặn user hoặc memory/place mức đọc.
+resurfacing_events
+Sự kiện hồi tưởng đã tạo.
+device_tokens
+FCM/APNs token cho push.
+audit_logs
+Nhật ký hành động quan trọng.
+7.2 Lược đồ quan hệ khuyến nghị
+users
+Cột
+Kiểu / ghi chú
+id
+uuid pk
+status
+smallint
+username
+varchar(30) unique nullable
+primary_email
+citext nullable
+primary_phone
+varchar(20) nullable
+email_verified_at
+timestamptz nullable
+phone_verified_at
+timestamptz nullable
+last_login_at
+timestamptz
+created_at
+timestamptz
+updated_at
+timestamptz
+user_profiles
+Cột
+Kiểu / ghi chú
+user_id
+uuid pk/fk users
+display_name
+varchar(80)
+avatar_media_id
+uuid nullable
+bio
+varchar(300)
+home_city
+varchar(120) nullable
+country_code
+char(2) nullable
+followers_count
+int
+following_count
+int
+total_likes_received
+int
+memories_count
+int
+created_at
+timestamptz
+updated_at
+timestamptz
+user_relationships
+Cột
+Kiểu / ghi chú
+id
+uuid pk
+source_user_id
+uuid fk
+target_user_id
+uuid fk
+relation_type
+smallint
+status
+smallint
+created_at
+timestamptz
+updated_at
+timestamptz
+places
+Cột
+Kiểu / ghi chú
+id
+uuid pk
+provider
+varchar(30)
+provider_place_id
+varchar(128)
+name
+varchar(255)
+address_text
+varchar(500)
+country_code
+char(2)
+admin1
+varchar(120)
+admin2
+varchar(120)
+location
+geography(Point,4326)
+geohash
+varchar(16)
+created_at
+timestamptz
+memories
+Cột
+Kiểu / ghi chú
+id
+uuid pk
+user_id
+uuid fk users
+place_id
+uuid fk places nullable
+place_snapshot_id
+uuid fk snapshot
+privacy_level
+smallint
+visibility_status
+smallint
+caption
+text
+mood_code
+varchar(32) nullable
+location
+geography(Point,4326)
+geohash
+varchar(16)
+taken_at
+timestamptz
+posted_at
+timestamptz
+deleted_at
+timestamptz nullable
+comment_policy
+smallint
+language_code
+varchar(8) nullable
+memory_media
+Cột
+Kiểu / ghi chú
+id
+uuid pk
+memory_id
+uuid fk memories
+media_type
+smallint
+storage_key
+varchar(512)
+thumbnail_key
+varchar(512) nullable
+mime_type
+varchar(100)
+width
+int
+height
+int
+duration_ms
+int nullable
+sort_order
+smallint
+processing_status
+smallint
+created_at
+timestamptz
+comments
+Cột
+Kiểu / ghi chú
+id
+uuid pk
+memory_id
+uuid fk memories
+user_id
+uuid fk users
+parent_comment_id
+uuid nullable
+root_comment_id
+uuid nullable
+content
+text
+status
+smallint
+created_at
+timestamptz
+updated_at
+timestamptz
+deleted_at
+timestamptz nullable
+likes
+Cột
+Kiểu / ghi chú
+memory_id
+uuid pk part
+user_id
+uuid pk part
+created_at
+timestamptz
+conversations
+Cột
+Kiểu / ghi chú
+id
+uuid pk
+conversation_type
+smallint
+created_by
+uuid fk users
+title
+varchar(255) nullable
+last_message_id
+uuid nullable
+created_at
+timestamptz
+updated_at
+timestamptz
+messages
+Cột
+Kiểu / ghi chú
+id
+uuid pk
+conversation_id
+uuid fk conversations
+sender_user_id
+uuid fk users
+message_type
+smallint
+text_content
+text nullable
+media_id
+uuid nullable
+reply_to_message_id
+uuid nullable
+sent_at
+timestamptz
+deleted_at
+timestamptz nullable
+notifications
+Cột
+Kiểu / ghi chú
+id
+uuid pk
+user_id
+uuid fk users
+type
+varchar(50)
+actor_user_id
+uuid nullable
+entity_type
+varchar(30)
+entity_id
+uuid nullable
+payload_json
+jsonb
+is_read
+boolean
+created_at
+timestamptz
+8. Chỉ mục, phân vùng và scale
+Index / Partition
+Mục đích
+memories(location)
+GIST trên geography(Point,4326) để truy vấn nearby ST_DWithin.
+memories(geohash, posted_at desc)
+Tối ưu cache/scan theo tile hoặc geohash prefix.
+memories(user_id, posted_at desc)
+Trang cá nhân, timeline user.
+memories(place_id, posted_at desc)
+Xem các memory cùng địa điểm.
+likes(memory_id)
+Đếm like, kiểm tra user đã like.
+comments(memory_id, created_at asc)
+Load comment tree theo thời gian.
+user_relationships(source_user_id, status)
+Danh sách following/friends.
+user_relationships(target_user_id, status)
+Followers và mutual lookup.
+messages(conversation_id, sent_at desc)
+Phân trang tin nhắn.
+notifications(user_id, is_read, created_at desc)
+Notification center.
+[Sáng tạo mới] 
+Chiến lược scale khuyến nghị:
+• Partition bảng memories theo posted_at hàng tháng hoặc hàng quý khi volume cao, nhưng vẫn giữ index geospatial cục bộ trên partition.
+• Partition messages theo conversation shard hoặc sent_at khi chat tăng mạnh.
+• Counter như likes_count, comments_count không cập nhật bằng COUNT(*) realtime; dùng bảng counter hoặc event consumer để materialize.
+• Map home không query trực tiếp toàn bán kính ở khu vực siêu đông; dùng tile cache/cluster cache theo zoom level trong Redis.
+• Dùng read replica cho profile/timeline/detail read-heavy; write vẫn vào primary.
+• Định nghĩa rank score materialized: freshness + distance + social affinity + engagement velocity, cập nhật async thay vì tính lại toàn phần cho mỗi request.
+8.1 Công thức dữ liệu nearby
+[Sáng tạo mới] 
+Một truy vấn nearby thực tế nên gồm 4 tầng lọc:
+• Tầng 1: lọc không gian bằng bbox hoặc radius với PostGIS.
+• Tầng 2: lọc quyền riêng tư và block.
+• Tầng 3: lọc business rules như status active, media processed, không bị report quá ngưỡng.
+• Tầng 4: xếp hạng theo score = w1*freshness + w2*distance_decay + w3*social_affinity + w4*engagement_velocity.
+9. Bảo mật, riêng tư và moderation
+Mảng
+Khuyến nghị
+Authentication
+Access token ngắn hạn + refresh token xoay vòng; device binding nếu cần.
+Authorization
+Mọi read memory phải qua policy check: owner/self, friend graph, block graph, visibility status.
+Privacy snapshot
+Khi tạo memory, lưu place snapshot riêng để lịch sử không bị thay đổi khi place canonical đổi tên.
+Rate limiting
+Giới hạn OTP, login, create memory, comment, chat send, report.
+Media safety
+Scan virus/nội dung độc hại; tách media processing sandbox.
+Abuse prevention
+Report, mute, block, shadow limit cho spam account, device fingerprint tùy pháp lý.
+Data retention
+Có soft delete + purge policy cho memory, chat, notification, logs.
+Auditability
+Lưu audit cho thay đổi quyền riêng tư, xóa nội dung, hành động admin.
+10. Lộ trình triển khai
+Giai đoạn
+Ưu tiên
+Kết quả mong đợi
+Phase 1 – MVP
+Cao
+Auth, map nearby, create memory, detail, profile cơ bản, likes/comments, single-region deployment, push notification cơ bản.
+Phase 2 – Growth
+Cao
+Collections, drafts, resurfacing, social graph nâng cao, cluster cache, report/block, chat ổn định, read replica.
+Phase 3 – Scale
+Cao
+Tách chat/notification/media pipeline, ranking service riêng, search index, multi-region media/CDN, partition nâng cao.
+Phase 4 – Intelligence
+Trung bình
+Gợi ý caption, place recommendation, anti-abuse ML, semantic place-memory discovery.
+Phụ lục A – Quy ước dữ liệu quan trọng
+• [Sáng tạo mới] privacy_level đề xuất: 1=private, 2=friends, 3=public.
+• [Sáng tạo mới] relation_type đề xuất: 1=follow, 2=friend_request, 3=friend, 4=block, 5=mute.
+• [Sáng tạo mới] memory status đề xuất: draft, published, hidden, deleted, archived, under_review.
+• [Sáng tạo mới] mood_code lưu dạng enum mềm hoặc bảng cấu hình để app có thể thêm preset mà không cần migration lớn.
+• [Chưa xác minh] Nếu sản phẩm muốn “bạn từng ở đây” thật chính xác, cần định nghĩa ngưỡng revisit theo bán kính 30–100m và thời gian dwell tối thiểu.
+Phụ lục B – Khuyến nghị chốt với team backend trước khi code
+• [Chưa xác minh] Chốt mô hình quan hệ: follow một chiều hay friend hai chiều là tính năng chính?
+• [Chưa xác minh] Chốt nguồn place canonical: Google Places, Mapbox, OSM hay tự quản lý lai?
+• [Chưa xác minh] Chốt retention chat và yêu cầu export/xóa dữ liệu người dùng.
+• [Chưa xác minh] Chốt chính sách quyền riêng tư mặc định khi tạo memory.
+• [Chưa xác minh] Chốt ngưỡng nearby mặc định theo zoom level và density của thành phố đông.

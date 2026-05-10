@@ -1,0 +1,59 @@
+# Lịch sử phát triển dự án Waymark
+
+## 2026-05-06
+- Khởi tạo file `history.md` để theo dõi các thay đổi của dự án.
+- **Worker**: Đã thiết lập `Celery` chạy với backend `Redis` (trong `app/worker.py`), bao gồm 2 task cơ bản: `process_media` và `send_notification`.
+- Cấu hình `docker-compose.yml` để tự động khởi chạy `worker` song song với `web`.
+- Cập nhật luồng tạo Memory (`app/api/memories.py`) để trigger `process_media` chạy ngầm.
+- **Social Graph & Engagement**:
+  - Tạo các models: `UserRelationship` (cho hệ thống Follow/Friend), `Like`, `Comment`.
+  - Migration database thành công cho các bảng social.
+  - Xây dựng file `app/api/social.py` gồm các API: Like/Unlike memory, Thêm comment vào memory, Follow user.
+  - Tích hợp push notification ngầm (Celery) khi có người Like, Comment hoặc Follow.
+- **Place & Geo Index**:
+  - Thêm CRUD cơ bản cho địa điểm qua file `app/api/places.py`.
+  - Cập nhật API Memory để hỗ trợ bind bài post với một `place_id` cụ thể.
+  - Hỗ trợ lấy toàn bộ memories thuộc về một Place (`GET /v1/places/{place_id}/memories`).
+- **News Feed / Discovery**:
+  - Viết `app/api/discovery.py`.
+  - Triển khai endpoint trending nearby (`GET /v1/discovery/trending/nearby`) để lọc các top memories public.
+  - Triển khai endpoint giả lập phân cụm trên map (`GET /v1/discovery/clusters`) hỗ trợ zoom/bbox bounds của bản đồ.
+- **Sửa lỗi Database Connection**:
+  - Xung đột cổng 5432 và 5433 với PostgreSQL có sẵn trên Windows.
+  - Cập nhật `docker-compose.yml` chuyển expose port của `postgres` sang **15432**.
+- **Media Upload (Cloudflare R2)**:
+  - Thêm bảng `Media` vào Database để lưu trữ video/ảnh.
+  - Cài đặt `boto3` và tạo API `POST /v1/memories/{memory_id}/media/upload-url` sinh **Presigned URL** trực tiếp lên Cloudflare R2 (Giảm tải băng thông cho server).
+- **Cải tiến Luồng tạo Memory & Upload ảnh trực tiếp**:
+  - Chuyển API tạo Memory (`POST /v1/memories`) sang dùng `multipart/form-data` để hỗ trợ upload ảnh trực tiếp qua tham số `images`.
+  - Tự động tải ảnh trực tiếp lên Cloudflare R2 (sử dụng thông tin khai báo trong `.env`) và lưu bản ghi vào bảng `Media` gắn với `Memory` vừa tạo.
+  - Cập nhật schema `MemoryDetailResponse` và API lấy chi tiết Memory (`GET /v1/memories/{memory_id}`) để sinh **Presigned GET URL** trực tiếp từ Cloudflare R2 dựa trên thông tin cấu hình `.env`, giúp hiển thị ảnh trực tiếp từ Cloudflare R2 một cách bảo mật mà không cần cấu hình Bucket Public.
+  - Sửa lỗi validate trường `place_id` (chuyển sang dạng `str` và phân tích UUID thủ công) giúp tránh lỗi crash 422 Unprocessable Entity của Pydantic/FastAPI khi người dùng nhập sai định dạng hoặc truyền chuỗi trống từ Swagger UI. Trả về thông báo lỗi chi tiết, dễ hiểu bằng Tiếng Việt.
+- **Tương tác xã hội & Sửa lỗi bình luận (Comment)**:
+  - Tích hợp động hiển thị `likes_count`, `comments_count` và trạng thái `is_liked` (người dùng hiện tại đã like hay chưa) vào tất cả các API trả về danh sách/chi tiết Memory.
+  - Sửa lỗi crash 500 khi bình luận nhờ cơ chế tiền kiểm tra sự tồn tại của `memory_id` và `parent_comment_id` ngay từ Python. Nếu người dùng nhập sai/để mặc định giá trị ví dụ của Swagger ở `parent_comment_id` thay vì trả lỗi 500 DB IntegrityError, hệ thống giờ sẽ phản hồi lỗi 400 rõ ràng bằng Tiếng Việt hướng dẫn xóa trống hoặc đặt thành null đối với bình luận mới.
+
+## 2026-05-07
+- **Hồ sơ cá nhân (Profile)**: 
+  - Thêm schema và API quản lý trang cá nhân `GET/PUT /v1/profile/me`.
+  - Hỗ trợ lấy thông tin người dùng khác `GET /v1/profile/{user_id}` và danh sách bài đăng của họ `GET /v1/profile/{user_id}/memories`.
+  - Bổ sung API `POST /v1/profile/me/avatar` cho phép tải trực tiếp ảnh đại diện lên Cloudflare R2 và tự động lưu vào UserProfile.
+- **Hoàn thiện Core API**: 
+  - Bổ sung API cập nhật/xóa bài đăng (PATCH/DELETE `/v1/memories/{memory_id}`) có đi kèm xóa cascade media, likes và comments liên quan.
+  - Bổ sung chức năng hủy theo dõi (DELETE `/v1/users/{user_id}/follow`).
+- **Tính năng Chat**: 
+  - Tạo các model database `Conversation`, `ConversationParticipant`, `Message`.
+  - Phát triển module `app/api/chat.py` hỗ trợ API tạo hội thoại, lấy danh sách hội thoại, gửi và xem tin nhắn.
+  - Cấu hình API chat trả về URL ảnh (`media_url`) được sinh bảo mật trực tiếp từ Cloudflare R2.
+- **Tính năng Collection (Bộ sưu tập)**:
+  - Tạo các model `Collection`, `CollectionItem`.
+  - Phát triển module `app/api/collections.py` hỗ trợ quản lý bộ sưu tập và lưu bài đăng (memories) vào album.
+- **Tính năng bình luận (Comment) có ảnh**:
+  - Nâng cấp model `Comment` hỗ trợ trường `media_id` và cập nhật API `POST /v1/memories/{id}/comments` sang định dạng Multipart hỗ trợ upload trực tiếp ảnh đi kèm bình luận lên R2.
+- **Giao diện Client Thử nghiệm (Test SPA)**:
+  - Xây dựng giao diện Single Page Application (SPA) tuyệt đẹp tại route gốc (`/`), sử dụng phong cách thiết kế Cyber-glassmorphism tối tân.
+  - Tích hợp bản đồ **Leaflet** giao diện Dark-theme của CartoDB, hỗ trợ click/double-click lấy tọa độ, hiển thị ghim bài viết động có kèm ảnh nạp từ R2, nút Like tương tác thời gian thực, khung bình luận kèm upload ảnh và lựa chọn lưu bài viết vào bộ sưu tập.
+  - Hỗ trợ đầy đủ bộ khung chat trực tiếp, cho phép tạo phòng chat theo User ID, gửi tin nhắn văn bản lẫn hình ảnh và tự động nạp tin nhắn mới liên tục (polling).
+- **Database & Migration**:
+  - Khắc phục lỗi `autogenerate` của Alembic khi dùng chung với hệ thống `postgis_tiger_geocoder`.
+  - Deploy script migration mới và nâng cấp DB (tạo bảng Chat, Collection) thành công qua môi trường Docker (`alembic upgrade head`).

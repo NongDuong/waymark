@@ -1,0 +1,3 @@
+Các khuyến nghị cần chú ý khi mang dự án lên môi trường thật (Production):
+Rate Limiting (Giới hạn tần suất gửi yêu cầu): Nên bật cấu hình chống brute-force mật khẩu và chống spam comment/post ở tầng tường lửa phía trước như Cloudflare WAF hoặc Nginx Limit Req để tránh bị DDoS cơ sở dữ liệu.
+Thay đổi Secret Key mặc định: Khi deploy, bắt buộc phải thay đổi biến SECRET_KEY trong file .env thành một chuỗi ngẫu nhiên dài và bảo mật để tránh việc kẻ xấu giả mạo chữ ký mã JWT token.
