@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 import uuid
 from typing import List
+from datetime import datetime
 
 from .. import schemas, models
 from ..database import get_db
@@ -75,6 +76,7 @@ def get_my_profile(
     
     result.is_admin = is_super_admin or has_any_permission
     result.is_super_admin = is_super_admin
+    result.is_vip = getattr(current_user, "is_vip", False)
     
     populate_dynamic_profile_stats(result, current_user.id, db)
     return result
@@ -118,6 +120,7 @@ def update_my_profile(
     
     result.is_admin = is_super_admin or has_any_permission
     result.is_super_admin = is_super_admin
+    result.is_vip = getattr(current_user, "is_vip", False)
     
     populate_dynamic_profile_stats(result, current_user.id, db)
     return result
@@ -200,6 +203,7 @@ def upload_avatar(
     
     result.is_admin = is_super_admin or has_any_permission
     result.is_super_admin = is_super_admin
+    result.is_vip = getattr(current_user, "is_vip", False)
     
     populate_dynamic_profile_stats(result, current_user.id, db)
     return result
@@ -255,6 +259,7 @@ def get_user_profile(
     
     result.is_admin = is_super_admin or has_any_permission
     result.is_super_admin = is_super_admin
+    result.is_vip = getattr(user, "is_vip", False)
     
     populate_dynamic_profile_stats(result, user_id, db)
     return result
@@ -291,9 +296,14 @@ def get_user_memories(
         
         is_friend = i_follow and they_follow
         if is_friend:
-            query = query.filter(models.Memory.privacy_level.in_([2, 3]))
+            query = query.filter(
+                (models.Memory.privacy_level == 2) |
+                ((models.Memory.privacy_level == 3) & (models.Memory.visibility_expires_at >= datetime.utcnow()))
+            )
         else:
-            query = query.filter(models.Memory.privacy_level == 3)
+            query = query.filter(
+                (models.Memory.privacy_level == 3) & (models.Memory.visibility_expires_at >= datetime.utcnow())
+            )
         
     memories_data = query.order_by(models.Memory.taken_at.desc()).offset(skip).limit(limit).all()
     

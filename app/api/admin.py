@@ -123,6 +123,7 @@ def create_user(
         hashed_password=hashed_password,
         status=1, # active
         is_admin=user_in.is_admin,
+        is_vip=user_in.is_vip,
         permissions=user_in.permissions or {},
         email_verified_at=datetime.utcnow()
     )

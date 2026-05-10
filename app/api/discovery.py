@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List
+from datetime import datetime
 
 from .. import schemas, models
 from ..database import get_db
@@ -28,7 +29,8 @@ def get_trending_nearby(
     
     query = db.query(models.Memory).filter(
         func.ST_DWithin(models.Memory.location.cast(Geography), center_point, radius),
-        models.Memory.privacy_level == 3 # Public
+        models.Memory.privacy_level == 3, # Public
+        models.Memory.visibility_expires_at >= datetime.utcnow()
     ).order_by(models.Memory.posted_at.desc()).limit(20)
     
     trending_memories = query.all()
@@ -79,7 +81,8 @@ def get_map_clusters(
     # Just return simple count within bbox as a single cluster for MVP
     count = db.query(func.count(models.Memory.id)).filter(
         func.ST_Intersects(models.Memory.location, polygon),
-        (models.Memory.privacy_level == 3) | (models.Memory.user_id == current_user.id)
+        (models.Memory.user_id == current_user.id) |
+        ((models.Memory.privacy_level == 3) & (models.Memory.visibility_expires_at >= datetime.utcnow()))
     ).scalar()
     
     if count > 0:

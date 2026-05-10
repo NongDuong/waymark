@@ -2,7 +2,7 @@ from sqlalchemy import Column, String, Integer, DateTime, Boolean, ForeignKey, S
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from geoalchemy2 import Geography, Geometry
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from .database import Base
 
 class User(Base):
@@ -19,6 +19,7 @@ class User(Base):
     phone_verified_at = Column(DateTime(timezone=True), nullable=True)
     last_login_at = Column(DateTime(timezone=True), nullable=True)
     permissions = Column(JSONB, nullable=True, default=dict)
+    is_vip = Column(Boolean, default=False, nullable=False, server_default="false")
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -81,6 +82,7 @@ class Memory(Base):
     village = Column(String(120), nullable=True) # Village / Neighborhood
     address_text = Column(String(500), nullable=True)
     place_name = Column(String(255), nullable=True) # Name of specific location (e.g. Restaurant A)
+    visibility_expires_at = Column(DateTime(timezone=True), default=lambda: datetime.utcnow() + timedelta(days=30))
 
 class UserRelationship(Base):
     __tablename__ = "user_relationships"

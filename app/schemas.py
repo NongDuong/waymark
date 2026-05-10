@@ -28,6 +28,7 @@ class UserResponse(BaseModel):
     username: str
     primary_email: EmailStr
     is_admin: bool = False
+    is_vip: bool = False
     created_at: datetime
     
     class Config:
@@ -60,6 +61,7 @@ class MemoryResponse(BaseModel):
     mood_code: Optional[str]
     privacy_level: int
     taken_at: datetime
+    visibility_expires_at: Optional[datetime] = None
     likes_count: int = 0
     comments_count: int = 0
     is_liked: bool = False
@@ -167,6 +169,7 @@ class UserProfileResponse(BaseModel):
     is_blocked: bool = False
     is_admin: bool = False
     is_super_admin: bool = False
+    is_vip: bool = False
     
     class Config:
         from_attributes = True
@@ -314,6 +317,7 @@ class AdminUserCreate(BaseModel):
     username: str
     password: str
     is_admin: bool = False
+    is_vip: bool = False
     permissions: Optional[dict] = None
 
 class AdminUserUpdate(BaseModel):
@@ -321,6 +325,7 @@ class AdminUserUpdate(BaseModel):
     email: Optional[EmailStr] = None
     status: Optional[int] = None
     is_admin: Optional[bool] = None
+    is_vip: Optional[bool] = None
     permissions: Optional[dict] = None
 
 class AdminUserResponse(BaseModel):
@@ -329,6 +334,7 @@ class AdminUserResponse(BaseModel):
     primary_email: EmailStr
     status: int
     is_admin: bool
+    is_vip: bool = False
     permissions: Optional[dict] = None
     created_at: datetime
 

@@ -259,6 +259,11 @@ def get_memory(
         raise HTTPException(status_code=403, detail="Not authorized to view this memory (User block is active)")
 
     # Check privacy level (1=private, 2=friends, 3=public)
+    from datetime import datetime
+    if memory.privacy_level == 3 and memory.user_id != current_user.id:
+        if memory.visibility_expires_at and memory.visibility_expires_at < datetime.utcnow():
+            raise HTTPException(status_code=403, detail="This public memory has expired and is no longer visible to other users")
+
     if memory.privacy_level == 1 and memory.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized to view this memory")
         
@@ -384,3 +389,29 @@ def delete_memory(
     
     db.commit()
     return
+
+@router.post("/{memory_id}/extend", response_model=schemas.MemoryDetailResponse)
+def extend_memory_visibility(
+    memory_id: uuid.UUID,
+    days: int = Query(30, ge=1, description="Number of days to extend visibility"),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    memory = db.query(models.Memory).filter(models.Memory.id == memory_id).first()
+    if not memory:
+        raise HTTPException(status_code=404, detail="Memory not found")
+        
+    if memory.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to extend visibility for this memory")
+    
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc)
+    current_expires = memory.visibility_expires_at or now
+    if current_expires < now:
+        current_expires = now
+        
+    memory.visibility_expires_at = current_expires + timedelta(days=days)
+    db.commit()
+    db.refresh(memory)
+    
+    return get_memory(memory_id=memory_id, db=db, current_user=current_user)

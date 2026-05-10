@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 import uuid
 from typing import List
+from datetime import datetime
 
 from .. import schemas, models
 from ..database import get_db
@@ -71,8 +72,8 @@ def get_place_memories(
         func.ST_X(models.Memory.location).label('lng')
     ).filter(
         models.Memory.place_id == place_id,
-        (models.Memory.privacy_level == 3) | 
         (models.Memory.user_id == current_user.id) |
+        ((models.Memory.privacy_level == 3) & (models.Memory.visibility_expires_at >= datetime.utcnow())) |
         ((models.Memory.privacy_level == 2) & models.Memory.user_id.in_(friend_ids))
     ).order_by(models.Memory.posted_at.desc()).limit(50).all()
     

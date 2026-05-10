@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List, Optional
+from datetime import datetime
 
 from .. import schemas, models
 from ..database import get_db
@@ -56,8 +57,8 @@ def get_map_pins(
     ).filter(
         func.ST_DWithin(models.Memory.location.cast(Geography), center_point, radius)
     ).filter(
-        (models.Memory.privacy_level == 3) | 
         (models.Memory.user_id == current_user.id) |
+        ((models.Memory.privacy_level == 3) & (models.Memory.visibility_expires_at >= datetime.utcnow())) |
         ((models.Memory.privacy_level == 2) & models.Memory.user_id.in_(friend_ids))
     )
     
