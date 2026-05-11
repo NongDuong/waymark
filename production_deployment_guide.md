@@ -109,7 +109,7 @@ Dán nội dung cấu hình sau vào (hãy thay thế `waymark.vn` bằng tên m
 ```nginx
 server {
     listen 80;
-    server_name waymark.vn www.waymark.vn;
+    server_name waymark.top www.waymark.top;
 
     # Cổng chuyển dữ liệu tới FastAPI Docker Container
     location / {
