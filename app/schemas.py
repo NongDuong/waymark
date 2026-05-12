@@ -23,6 +23,10 @@ class AppleLoginRequest(BaseModel):
     id_token: str
     display_name: Optional[str] = None
 
+class LoginRequest(BaseModel):
+    username: str  # username hoặc email
+    password: str
+
 class UserResponse(BaseModel):
     id: UUID
     username: str

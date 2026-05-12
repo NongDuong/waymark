@@ -1,5 +1,4 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from datetime import timedelta
 import uuid
@@ -49,15 +48,15 @@ def signup(user_in: schemas.UserCreate, db: Session = Depends(get_db)):
     return new_user
 
 @router.post("/login/password", response_model=schemas.Token)
-def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    # form_data.username can be username or email
+def login(login_in: schemas.LoginRequest, db: Session = Depends(get_db)):
+    # login_in.username can be username or email
     user = db.query(models.User).filter(
-        (models.User.username == form_data.username) | 
-        (models.User.primary_email == form_data.username)
+        (models.User.username == login_in.username) | 
+        (models.User.primary_email == login_in.username)
     ).first()
     
     # Verify password
-    if not user or not user.hashed_password or not security.verify_password(form_data.password, user.hashed_password):
+    if not user or not user.hashed_password or not security.verify_password(login_in.password, user.hashed_password):
         raise HTTPException(status_code=400, detail="Incorrect email or password")
         
     access_token_expires = timedelta(minutes=security.ACCESS_TOKEN_EXPIRE_MINUTES)
