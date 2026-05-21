@@ -14,11 +14,40 @@ def get_collections(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
+    from sqlalchemy import func
+    from .media import get_r2_url
+    
     collections = db.query(models.Collection).filter(
         models.Collection.user_id == current_user.id
     ).order_by(models.Collection.created_at.desc()).all()
     
-    return collections
+    results = []
+    for col in collections:
+        res = schemas.CollectionResponse.model_validate(col)
+        
+        # Count items in this collection
+        res.items_count = db.query(func.count(models.CollectionItem.id)).filter(
+            models.CollectionItem.collection_id == col.id
+        ).scalar() or 0
+        
+        # Get cover image: newest media from the newest memory in this collection
+        newest_item = db.query(models.CollectionItem).filter(
+            models.CollectionItem.collection_id == col.id
+        ).order_by(models.CollectionItem.added_at.desc()).first()
+        
+        if newest_item:
+            # Find the first media image from this memory
+            cover_media = db.query(models.Media).filter(
+                models.Media.memory_id == newest_item.memory_id,
+                models.Media.media_type == 1  # image
+            ).order_by(models.Media.created_at.desc()).first()
+            
+            if cover_media:
+                res.cover_image_url = get_r2_url(cover_media.file_url)
+        
+        results.append(res)
+    
+    return results
 
 @router.post("", response_model=schemas.CollectionResponse)
 def create_collection(

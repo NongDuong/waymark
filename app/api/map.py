@@ -71,6 +71,7 @@ def get_map_pins(
     print(f"DEBUG: Found {len(memories_data)} pins for user {current_user.username}")
     
     results = []
+    from .media import get_r2_url
     for m, lat, lng in memories_data:
         # Count likes, comments, and check if liked by current user
         likes_c = db.query(func.count(models.Like.memory_id)).filter(models.Like.memory_id == m.id).scalar() or 0
@@ -85,6 +86,14 @@ def get_map_pins(
         m_res.comments_count = comments_c
         m_res.is_liked = liked_by_me
         m_res.location = {"lat": lat, "lng": lng}
+        
+        # Populate media (images/videos)
+        media_records = db.query(models.Media).filter(models.Media.memory_id == m.id).all()
+        m_res.media = []
+        for media in media_records:
+            m_schema = schemas.MediaResponse.model_validate(media)
+            m_schema.file_url = get_r2_url(media.file_url)
+            m_res.media.append(m_schema)
         
         from .memories import populate_author_info
         populate_author_info(m_res, db)

@@ -181,7 +181,7 @@ def get_memory_comments(
     if not memory:
         raise HTTPException(status_code=404, detail="Memory không tồn tại.")
         
-    # Fetch comments joined with User and UserProfile
+    # Fetch comments joined with User and UserProfile, excluding soft-deleted comments
     comments = db.query(
         models.Comment,
         models.User.username,
@@ -192,7 +192,8 @@ def get_memory_comments(
     ).outerjoin(
         models.UserProfile, models.UserProfile.user_id == models.Comment.user_id
     ).filter(
-        models.Comment.memory_id == memory_id
+        models.Comment.memory_id == memory_id,
+        models.Comment.deleted_at.is_(None)
     ).order_by(
         models.Comment.created_at.asc()
     ).all()

@@ -6,6 +6,7 @@ from uuid import UUID
 class Token(BaseModel):
     access_token: str
     token_type: str
+    user_id: Optional[UUID] = None
 
 class UserCreate(BaseModel):
     email: EmailStr
@@ -70,6 +71,7 @@ class MemoryResponse(BaseModel):
     comments_count: int = 0
     is_liked: bool = False
     location: Optional[Any] = None
+    media: Optional[List['MediaResponse']] = []
     
     # Location components
     country: Optional[str] = None
@@ -256,6 +258,8 @@ class CollectionResponse(BaseModel):
     description: Optional[str] = None
     is_public: bool
     created_at: datetime
+    cover_image_url: Optional[str] = None
+    items_count: int = 0
     
     class Config:
         from_attributes = True
@@ -344,3 +348,7 @@ class AdminUserResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+# Resolve forward references for MemoryResponse -> MediaResponse
+MemoryResponse.model_rebuild()
+MemoryDetailResponse.model_rebuild()

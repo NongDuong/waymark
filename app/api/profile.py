@@ -278,7 +278,10 @@ def get_user_memories(
         models.Memory,
         func.ST_Y(models.Memory.location).label('lat'),
         func.ST_X(models.Memory.location).label('lng')
-    ).filter(models.Memory.user_id == user_id)
+    ).filter(
+        models.Memory.user_id == user_id,
+        models.Memory.deleted_at.is_(None)
+    )
     
     # If not the owner, filter out private memories
     if user_id != current_user.id:
@@ -307,6 +310,7 @@ def get_user_memories(
         
     memories_data = query.order_by(models.Memory.taken_at.desc()).offset(skip).limit(limit).all()
     
+    from .media import get_r2_url
     results = []
     for memory, lat, lng in memories_data:
         likes_count = db.query(func.count(models.Like.memory_id)).filter(models.Like.memory_id == memory.id).scalar() or 0
@@ -321,6 +325,15 @@ def get_user_memories(
         res.likes_count = likes_count
         res.comments_count = comments_count
         res.is_liked = is_liked
+        
+        # Populate media (images/videos)
+        media_records = db.query(models.Media).filter(models.Media.memory_id == memory.id).all()
+        res.media = []
+        for m in media_records:
+            m_schema = schemas.MediaResponse.model_validate(m)
+            m_schema.file_url = get_r2_url(m.file_url)
+            res.media.append(m_schema)
+        
         results.append(res)
         
     return results

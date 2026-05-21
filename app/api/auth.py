@@ -63,7 +63,7 @@ def login(login_in: schemas.LoginRequest, db: Session = Depends(get_db)):
     access_token = security.create_access_token(
         data={"sub": str(user.id)}, expires_delta=access_token_expires
     )
-    return {"access_token": access_token, "token_type": "bearer"}
+    return {"access_token": access_token, "token_type": "bearer", "user_id": str(user.id)}
 
 @router.get("/me", response_model=schemas.UserResponse)
 def get_me(current_user: models.User = Depends(get_current_user)):
@@ -151,7 +151,7 @@ def login_google(google_in: schemas.GoogleLoginRequest, db: Session = Depends(ge
     access_token = security.create_access_token(
         data={"sub": str(user.id)}, expires_delta=access_token_expires
     )
-    return {"access_token": access_token, "token_type": "bearer"}
+    return {"access_token": access_token, "token_type": "bearer", "user_id": str(user.id)}
 
 
 @router.post("/facebook", response_model=schemas.Token)
@@ -246,7 +246,7 @@ def login_facebook(fb_in: schemas.FacebookLoginRequest, db: Session = Depends(ge
     access_token = security.create_access_token(
         data={"sub": str(user.id)}, expires_delta=access_token_expires
     )
-    return {"access_token": access_token, "token_type": "bearer"}
+    return {"access_token": access_token, "token_type": "bearer", "user_id": str(user.id)}
 
 
 @router.post("/apple", response_model=schemas.Token)
@@ -319,4 +319,4 @@ def login_apple(apple_in: schemas.AppleLoginRequest, db: Session = Depends(get_d
     access_token = security.create_access_token(
         data={"sub": str(user.id)}, expires_delta=access_token_expires
     )
-    return {"access_token": access_token, "token_type": "bearer"}
+    return {"access_token": access_token, "token_type": "bearer", "user_id": str(user.id)}
