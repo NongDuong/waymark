@@ -246,6 +246,10 @@ def get_memory(
     memory = db.query(models.Memory).filter(models.Memory.id == memory_id).first()
     if not memory:
         raise HTTPException(status_code=404, detail="Memory not found")
+    
+    # Check if memory has been soft-deleted
+    if memory.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Memory not found")
         
     # Check blocking relationship
     block_exists = db.query(models.UserRelationship).filter(
@@ -260,13 +264,9 @@ def get_memory(
 
     # Check privacy level (1=private, 2=friends, 3=public)
     from datetime import datetime
-    if memory.privacy_level == 3 and memory.user_id != current_user.id:
-        if memory.visibility_expires_at and memory.visibility_expires_at < datetime.utcnow():
-            raise HTTPException(status_code=403, detail="This public memory has expired and is no longer visible to other users")
-
     if memory.privacy_level == 1 and memory.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized to view this memory")
-        
+    
     # Check friends privacy constraint (level 2)
     if memory.privacy_level == 2 and memory.user_id != current_user.id:
         is_friend = db.query(models.UserRelationship).filter(
@@ -281,6 +281,11 @@ def get_memory(
         
         if not is_friend:
             raise HTTPException(status_code=403, detail="This memory is restricted to friends only")
+
+    # Check public visibility expiration (level 3)
+    if memory.privacy_level == 3 and memory.user_id != current_user.id:
+        if memory.visibility_expires_at and memory.visibility_expires_at < datetime.utcnow():
+            raise HTTPException(status_code=403, detail="This public memory has expired and is no longer visible to other users")
     
     # We return the memory. GeoAlchemy2 Geography fields aren't JSON serializable by default.
     # We will need to query ST_AsText or similar if we want actual coords in response.

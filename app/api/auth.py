@@ -63,7 +63,51 @@ def login(login_in: schemas.LoginRequest, db: Session = Depends(get_db)):
     access_token = security.create_access_token(
         data={"sub": str(user.id)}, expires_delta=access_token_expires
     )
-    return {"access_token": access_token, "token_type": "bearer", "user_id": str(user.id)}
+    refresh_token = security.create_refresh_token(
+        data={"sub": str(user.id)}
+    )
+    return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer", "user_id": str(user.id)}
+
+@router.post("/refresh", response_model=schemas.Token)
+def refresh_token(body: schemas.RefreshTokenRequest, db: Session = Depends(get_db)):
+    """Làm mới access token bằng refresh token. Trả về cặp token mới (token rotation)."""
+    from jose import JWTError, jwt as jose_jwt
+    try:
+        payload = jose_jwt.decode(body.refresh_token, security.SECRET_KEY, algorithms=[security.ALGORITHM])
+        token_type = payload.get("type")
+        user_id_str = payload.get("sub")
+        if token_type != "refresh" or user_id_str is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
+    except JWTError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token expired or invalid")
+    
+    # Verify user still exists and is active
+    import uuid as uuid_mod
+    try:
+        user_uuid = uuid_mod.UUID(user_id_str)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
+    
+    user = db.query(models.User).filter(models.User.id == user_uuid).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    if user.status == 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive user")
+    
+    # Issue new token pair (rotation)
+    access_token_expires = timedelta(minutes=security.ACCESS_TOKEN_EXPIRE_MINUTES)
+    new_access_token = security.create_access_token(
+        data={"sub": str(user.id)}, expires_delta=access_token_expires
+    )
+    new_refresh_token = security.create_refresh_token(
+        data={"sub": str(user.id)}
+    )
+    return {
+        "access_token": new_access_token,
+        "refresh_token": new_refresh_token,
+        "token_type": "bearer",
+        "user_id": str(user.id)
+    }
 
 @router.get("/me", response_model=schemas.UserResponse)
 def get_me(current_user: models.User = Depends(get_current_user)):
@@ -146,12 +190,15 @@ def login_google(google_in: schemas.GoogleLoginRequest, db: Session = Depends(ge
         db.commit()
         db.refresh(user)
         
-    # Issue JWT access token
+    # Issue JWT access token + refresh token
     access_token_expires = timedelta(minutes=security.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = security.create_access_token(
         data={"sub": str(user.id)}, expires_delta=access_token_expires
     )
-    return {"access_token": access_token, "token_type": "bearer", "user_id": str(user.id)}
+    refresh_token = security.create_refresh_token(
+        data={"sub": str(user.id)}
+    )
+    return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer", "user_id": str(user.id)}
 
 
 @router.post("/facebook", response_model=schemas.Token)
@@ -241,12 +288,15 @@ def login_facebook(fb_in: schemas.FacebookLoginRequest, db: Session = Depends(ge
         db.commit()
         db.refresh(user)
         
-    # Issue JWT access token
+    # Issue JWT access token + refresh token
     access_token_expires = timedelta(minutes=security.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = security.create_access_token(
         data={"sub": str(user.id)}, expires_delta=access_token_expires
     )
-    return {"access_token": access_token, "token_type": "bearer", "user_id": str(user.id)}
+    refresh_token = security.create_refresh_token(
+        data={"sub": str(user.id)}
+    )
+    return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer", "user_id": str(user.id)}
 
 
 @router.post("/apple", response_model=schemas.Token)
@@ -314,9 +364,12 @@ def login_apple(apple_in: schemas.AppleLoginRequest, db: Session = Depends(get_d
         db.commit()
         db.refresh(user)
         
-    # Issue JWT access token
+    # Issue JWT access token + refresh token
     access_token_expires = timedelta(minutes=security.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = security.create_access_token(
         data={"sub": str(user.id)}, expires_delta=access_token_expires
     )
-    return {"access_token": access_token, "token_type": "bearer", "user_id": str(user.id)}
+    refresh_token = security.create_refresh_token(
+        data={"sub": str(user.id)}
+    )
+    return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer", "user_id": str(user.id)}

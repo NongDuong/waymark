@@ -54,8 +54,15 @@ username=duongwaymark&password=SecurePassword123
 ```
 **Response 200:**
 ```json
-{ "access_token": "eyJhbGci...", "token_type": "bearer" }
+{
+  "access_token": "eyJhbGci...",
+  "refresh_token": "eyJhbGci...",
+  "token_type": "bearer",
+  "user_id": "uuid"
+}
 ```
+
+> **Lưu ý:** Từ phiên bản này, tất cả endpoint login đều trả về thêm `refresh_token` (JWT dài hạn 7 ngày). Xem mục **Làm mới Token** bên dưới.
 
 ---
 
@@ -66,7 +73,7 @@ Gửi `credential` (ID Token) nhận được từ Google Sign-In SDK trên App.
 ```json
 { "credential": "<google_id_token>" }
 ```
-**Response 200:** Trả về JWT token tương tự login thông thường.
+**Response 200:** Trả về JWT token tương tự login thông thường (bao gồm `access_token`, `refresh_token`, `token_type`, `user_id`).
 
 > **Lưu ý:** Nếu email chưa tồn tại, hệ thống sẽ tự động tạo tài khoản mới và hồ sơ cá nhân kèm ảnh avatar từ Google.
 
@@ -92,8 +99,56 @@ Gửi `id_token` từ Sign in with Apple SDK.
 
 ---
 
+### `POST /auth/refresh` — Làm mới Token (Refresh)
+Khi `access_token` hết hạn, gửi `refresh_token` để nhận cặp token mới mà không cần đăng nhập lại. Hệ thống áp dụng **token rotation**: mỗi lần refresh đều trả về cả `access_token` mới lẫn `refresh_token` mới.
+
+**Request Body (JSON):**
+```json
+{
+  "refresh_token": "eyJhbGci...<refresh_token_cũ>"
+}
+```
+
+**Response 200:**
+```json
+{
+  "access_token": "eyJhbGci...<access_token_mới>",
+  "refresh_token": "eyJhbGci...<refresh_token_mới>",
+  "token_type": "bearer",
+  "user_id": "uuid"
+}
+```
+
+**Lỗi thường gặp:**
+| Mã | Chi tiết |
+|----|---------|
+| 401 | `Refresh token expired or invalid` — Token đã hết hạn hoặc sai định dạng |
+| 401 | `Invalid refresh token` — Token không phải loại refresh hoặc thiếu user ID |
+| 401 | `User not found` — Tài khoản đã bị xóa |
+| 400 | `Inactive user` — Tài khoản bị khóa |
+
+> **Quy trình đề xuất cho App:**
+> 1. Lưu cả `access_token` và `refresh_token` khi đăng nhập.
+> 2. Khi gọi API nhận `401`, gửi `POST /auth/refresh` với `refresh_token`.
+> 3. Nếu refresh thành công → cập nhật cả 2 token → gọi lại API ban đầu.
+> 4. Nếu refresh thất bại (401) → chuyển về màn hình đăng nhập.
+
+---
+
 ### `GET /auth/me` 🔒 — Lấy thông tin tài khoản hiện tại
 Trả về thông tin User đang đăng nhập (không bao gồm thông tin hồ sơ chi tiết).
+
+**Response 200:**
+```json
+{
+  "id": "uuid",
+  "username": "duongwaymark",
+  "primary_email": "user@example.com",
+  "is_admin": false,
+  "is_vip": false,
+  "created_at": "2026-01-15T08:30:00Z"
+}
+```
 
 ---
 
@@ -400,41 +455,212 @@ Khi người dùng zoom out bản đồ, gộp nhiều ghim gần nhau thành m�
 
 ## 8. CHAT & WEBSOCKET
 
-### Kết nối WebSocket — Nhận tin nhắn thời gian thực
+### 8.1 Tổng quan Kiến trúc Chat
+
+Hệ thống chat sử dụng kiến trúc **kết hợp REST + WebSocket**:
+- **REST API** để tạo cuộc hội thoại, gửi tin nhắn, lấy lịch sử → đảm bảo logic nghiệp vụ tập trung.
+- **WebSocket** để nhận tin nhắn thời gian thực → App không cần polling.
+
+**Luồng hoạt động cơ bản:**
+1. App kết nối WebSocket khi khởi động (dùng `access_token`).
+2. Khi user gửi tin nhắn, App gọi `POST /conversations/{id}/messages`.
+3. Server lưu tin nhắn vào DB → đẩy payload qua WebSocket đến **tất cả thành viên** (kể cả người gửi trên thiết bị khác).
+4. App nhận payload WebSocket → hiển thị tin nhắn mới ngay lập tức.
+
+> Hệ thống hỗ trợ **multi-device**: Cùng một user có thể kết nối WebSocket từ nhiều thiết bị, tất cả đều nhận tin.
+
+---
+
+### 8.2 Kết nối WebSocket — Nhận tin nhắn thời gian thực
+
+**URL kết nối:**
 ```
 wss://<your-domain>/v1/conversations/ws/<access_token>
 ```
-Kết nối một lần khi App khởi động. Khi có tin nhắn mới trong bất kỳ cuộc hội thoại nào, server sẽ **đẩy dữ liệu về tức thì** qua WebSocket, không cần App polling liên tục.
+
+**Hướng dẫn chi tiết:**
+
+| Bước | Mô tả |
+|------|-------|
+| 1. Kết nối | Gửi WebSocket handshake đến URL trên. Server sẽ verify JWT token từ URL path. |
+| 2. Xác thực | Nếu token hợp lệ → server accept kết nối. Nếu không → server đóng kết nối với code `1008 (Policy Violation)`. |
+| 3. Lắng nghe | Sau khi kết nối, App chỉ cần **lắng nghe** (receive). Không cần gửi gì qua WebSocket. |
+| 4. Xử lý ngắt | Khi mất kết nối, App nên tự động reconnect sau 2-5 giây (exponential backoff). |
 
 **Payload nhận được khi có tin nhắn mới:**
 ```json
 {
   "type": "new_message",
-  "conversation_id": "uuid",
-  "message": { "id": "uuid", "text_content": "Xin chào!", "sender_user_id": "uuid", "sent_at": "..." }
+  "conversation_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "message": {
+    "id": "f1e2d3c4-b5a6-7890-abcd-ef1234567890",
+    "conversation_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "sender_user_id": "11111111-2222-3333-4444-555555555555",
+    "message_type": 1,
+    "text_content": "Xin chào bạn!",
+    "media_id": null,
+    "media_url": null,
+    "reply_to_message_id": null,
+    "sent_at": "2026-05-22T10:30:00Z"
+  }
+}
+```
+
+**Các trường trong `message`:**
+| Trường | Kiểu | Mô tả |
+|--------|------|-------|
+| `id` | UUID | ID duy nhất của tin nhắn |
+| `conversation_id` | UUID | Cuộc hội thoại chứa tin nhắn |
+| `sender_user_id` | UUID | Người gửi |
+| `message_type` | int | `1` = Văn bản, `2` = Hình ảnh |
+| `text_content` | string\|null | Nội dung text (null nếu là ảnh) |
+| `media_id` | UUID\|null | ID media đính kèm |
+| `media_url` | string\|null | URL trực tiếp tới media (đã signed) |
+| `reply_to_message_id` | UUID\|null | ID tin nhắn đang reply (null nếu không reply) |
+| `sent_at` | datetime | Thời điểm gửi (UTC) |
+
+> **Xử lý reconnect khuyến nghị:** Khi WebSocket bị ngắt, App nên:
+> 1. Reconnect với backoff: 2s → 4s → 8s → 16s (tối đa 30s).
+> 2. Sau khi reconnect, gọi `GET /conversations` để kiểm tra tin nhắn bị lỡ.
+> 3. So sánh `last_message_id` của mỗi cuộc hội thoại với tin nhắn cuối cùng App đã nhận.
+
+---
+
+### 8.3 `GET /conversations` 🔒 — Danh sách cuộc hội thoại
+
+Trả về tất cả cuộc hội thoại mà user đang tham gia, sắp xếp theo thời gian cập nhật mới nhất. Tự động **ẩn** cuộc hội thoại với người đã chặn.
+
+**Response 200:**
+```json
+[
+  {
+    "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "conversation_type": 1,
+    "created_by": "uuid",
+    "title": "Dương Waymark",
+    "last_message_id": "uuid",
+    "created_at": "2026-05-20T08:00:00Z",
+    "updated_at": "2026-05-22T10:30:00Z",
+    "is_pending": false,
+    "other_user_id": "uuid-đối-phương",
+    "other_user_username": "duongwaymark",
+    "other_user_display_name": "Dương Waymark",
+    "other_user_avatar_url": "https://pub-xxx.r2.dev/avatars/...",
+    "last_message_text": "Xin chào bạn!",
+    "last_message_sender_id": "uuid-người-gửi-cuối"
+  }
+]
+```
+
+**Giải thích các trường quan trọng:**
+| Trường | Kiểu | Mô tả |
+|--------|------|-------|
+| `conversation_type` | int | `1` = Chat riêng tư (direct, 2 người), `2` = Nhóm (group) |
+| `is_pending` | bool | `true` nếu đây là cuộc hội thoại direct mà hai người **chưa follow chéo nhau** (giống "Message Request" của Instagram). App có thể hiển thị riêng tab "Tin nhắn chờ". |
+| `other_user_*` | | Thông tin đối phương (chỉ có ở chat direct `conversation_type=1`). Bao gồm ID, username, tên hiển thị, avatar. |
+| `title` | string\|null | Với chat direct: tự động lấy tên đối phương. Với chat nhóm: tiêu đề do người tạo đặt. |
+| `last_message_text` | string\|null | Nội dung tin nhắn cuối cùng. Nếu là ảnh → hiển thị `"[Hình ảnh]"`. |
+| `last_message_sender_id` | UUID\|null | ID người gửi tin nhắn cuối — App dùng để hiển thị "Bạn: ..." hay tên người khác. |
+
+---
+
+### 8.4 `POST /conversations` 🔒 — Tạo cuộc hội thoại mới
+
+Tạo cuộc hội thoại riêng tư hoặc nhóm. Người tạo tự động được thêm làm thành viên.
+
+**Request Body (JSON):**
+```json
+{
+  "participant_user_ids": ["uuid-người-nhận"],
+  "title": null,
+  "conversation_type": 1
+}
+```
+
+**Quy tắc:**
+| Điều kiện | Kết quả |
+|-----------|---------|
+| `participant_user_ids` có **1 người** | Tạo chat **riêng tư (direct)**, `conversation_type` tự động = `1` |
+| `participant_user_ids` có **nhiều người** | Tạo chat **nhóm (group)**, `conversation_type` tự động = `2` |
+| `title` | Tùy chọn. Chỉ có ý nghĩa với chat nhóm. Chat direct tự lấy tên đối phương. |
+
+**Response 201:** Trả về object `ConversationResponse` tương tự như `GET /conversations` (1 phần tử).
+
+```json
+{
+  "id": "uuid-mới-tạo",
+  "conversation_type": 1,
+  "created_by": "uuid-của-bạn",
+  "title": "Dương Waymark",
+  "last_message_id": null,
+  "created_at": "2026-05-22T10:30:00Z",
+  "updated_at": "2026-05-22T10:30:00Z",
+  "is_pending": true,
+  "other_user_id": "uuid-đối-phương",
+  "other_user_username": "duongwaymark",
+  "other_user_display_name": "Dương Waymark",
+  "other_user_avatar_url": "https://pub-xxx.r2.dev/avatars/...",
+  "last_message_text": null,
+  "last_message_sender_id": null
 }
 ```
 
 ---
 
-### REST API Chat
-| Method | Endpoint | Mô tả |
-|--------|----------|-------|
-| `GET` | `/conversations` 🔒 | Danh sách cuộc hội thoại (kèm tin nhắn cuối, avatar đối phương). |
-| `POST` | `/conversations` 🔒 | Tạo cuộc hội thoại mới (trực tiếp hoặc nhóm). |
-| `GET` | `/conversations/{id}/messages` 🔒 | Lấy lịch sử tin nhắn (hỗ trợ phân trang). |
-| `POST` | `/conversations/{id}/messages` 🔒 | Gửi tin nhắn. Tự động đẩy WebSocket đến các thành viên. |
+### 8.5 `GET /conversations/{conversation_id}/messages` 🔒 — Lấy lịch sử tin nhắn
 
-**Tạo cuộc hội thoại:**
+Trả về danh sách tin nhắn trong cuộc hội thoại, **mới nhất trước** (sắp xếp giảm dần theo `sent_at`). Chỉ thành viên cuộc hội thoại mới truy cập được.
+
+**Query Parameters:**
+| Param | Type | Mặc định | Mô tả |
+|-------|------|---------|-------|
+| `skip` | int | 0 | Bỏ qua N tin nhắn đầu (dùng cho phân trang "load more") |
+| `limit` | int | 50 | Số lượng tin nhắn trả về tối đa |
+
+**Response 200:**
 ```json
-{
-  "participant_user_ids": ["uuid-người-nhận"],
-  "title": null
-}
+[
+  {
+    "id": "f1e2d3c4-b5a6-7890-abcd-ef1234567890",
+    "conversation_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "sender_user_id": "11111111-2222-3333-4444-555555555555",
+    "message_type": 1,
+    "text_content": "Xin chào bạn!",
+    "media_id": null,
+    "media_url": null,
+    "reply_to_message_id": null,
+    "sent_at": "2026-05-22T10:30:00Z"
+  },
+  {
+    "id": "a2b3c4d5-e6f7-8901-abcd-ef2345678901",
+    "conversation_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "sender_user_id": "22222222-3333-4444-5555-666666666666",
+    "message_type": 2,
+    "text_content": null,
+    "media_id": "uuid-media",
+    "media_url": "https://pub-xxx.r2.dev/general/uuid-media.webp",
+    "reply_to_message_id": "f1e2d3c4-b5a6-7890-abcd-ef1234567890",
+    "sent_at": "2026-05-22T10:31:00Z"
+  }
+]
 ```
-> Nếu `participant_user_ids` có 1 người → tạo chat **riêng tư (direct)**. Nhiều người → tạo **nhóm**.
 
-**Gửi tin nhắn:**
+**Lỗi thường gặp:**
+| Mã | Chi tiết |
+|----|---------|
+| 403 | `Not a participant of this conversation` — User không phải thành viên |
+
+> **Phân trang:** App tải trang đầu với `skip=0&limit=50`. Khi user cuộn lên, tải trang tiếp `skip=50&limit=50`, v.v.
+
+---
+
+### 8.6 `POST /conversations/{conversation_id}/messages` 🔒 — Gửi tin nhắn
+
+Gửi tin nhắn mới vào cuộc hội thoại. Sau khi lưu, server tự động:
+1. Cập nhật `last_message_id` và `updated_at` của cuộc hội thoại.
+2. Đẩy payload qua **WebSocket** đến tất cả thành viên đang online.
+
+**Request Body (JSON):**
 ```json
 {
   "text_content": "Nội dung tin nhắn",
@@ -442,6 +668,36 @@ Kết nối một lần khi App khởi động. Khi có tin nhắn mới trong b
   "reply_to_message_id": null
 }
 ```
+
+**Các trường Request:**
+| Trường | Kiểu | Bắt buộc | Mô tả |
+|--------|------|----------|-------|
+| `text_content` | string\|null | Có* | Nội dung text. Bắt buộc nếu không có `media_id`. |
+| `media_id` | UUID\|null | Không | ID media đã upload trước đó (dùng `POST /media/upload`). Nếu có → `message_type` tự động = `2`. |
+| `reply_to_message_id` | UUID\|null | Không | ID tin nhắn muốn reply. App có thể hiển thị tin nhắn gốc dạng quote. |
+
+> \* Ít nhất phải có `text_content` hoặc `media_id`.
+
+**Response 200:**
+```json
+{
+  "id": "uuid-tin-nhắn-mới",
+  "conversation_id": "uuid",
+  "sender_user_id": "uuid-của-bạn",
+  "message_type": 1,
+  "text_content": "Nội dung tin nhắn",
+  "media_id": null,
+  "media_url": null,
+  "reply_to_message_id": null,
+  "sent_at": "2026-05-22T10:35:00Z"
+}
+```
+
+**Lỗi thường gặp:**
+| Mã | Chi tiết |
+|----|---------|
+| 403 | `Not a participant of this conversation` — User không phải thành viên |
+| 403 | `Bạn không thể gửi tin nhắn cho người dùng này do có thiết lập chặn.` — Đã chặn hoặc bị chặn (chỉ chat direct) |
 
 ---
 

@@ -57,3 +57,28 @@
 - **Database & Migration**:
   - Khắc phục lỗi `autogenerate` của Alembic khi dùng chung với hệ thống `postgis_tiger_geocoder`.
   - Deploy script migration mới và nâng cấp DB (tạo bảng Chat, Collection) thành công qua môi trường Docker (`alembic upgrade head`).
+
+## 2026-05-21
+- **Cập nhật hình ảnh (Media) cho các API hiển thị**:
+  - Sửa API Map Pins (`GET /v1/map/pins`) để tự động kèm theo danh sách link ảnh/video (`media`) của mỗi bài đăng.
+  - Sửa API Profile Memories (`GET /v1/profile/{user_id}/memories`) bổ sung mảng `media` chứa ảnh thực tế.
+  - Sửa API Danh sách Collections (`GET /v1/collections`), bổ sung `cover_image_url` (tự động lấy ảnh mới nhất làm ảnh bìa) và `items_count`.
+- **Cải tiến Authentication**:
+  - Bổ sung trả về trường `user_id` kèm theo JWT Token trong tất cả các API đăng nhập/đăng ký (Password, Google, Facebook, Apple).
+- **Sửa lỗi API & Database**:
+  - Khắc phục lỗi **500 Internal Server Error** trên API Comments (`GET /v1/memories/{memory_id}/comments`) do truy vấn bảng `comment_likes` chưa được khởi tạo. Đã viết file Migration mới (`g1h2i3j4k5l6`) và áp dụng thành công.
+  - Sửa lỗi crash Pydantic Model (Forward Reference của `MediaResponse`) bằng `model_rebuild()`.
+  - Cập nhật các bộ lọc truy vấn: Loại bỏ các bản ghi đã bị xóa mềm (`deleted_at IS NOT NULL`) khỏi API danh sách Memories và Comments.
+
+## 2026-05-22
+- **Thêm Refresh Token**:
+  - Thêm hàm `create_refresh_token()` vào `app/core/security.py` — tạo JWT dài hạn 7 ngày (cấu hình qua env `REFRESH_TOKEN_EXPIRE_DAYS`), phân biệt với access token bằng trường `type: "refresh"` trong payload.
+  - Cập nhật schema `Token` trong `app/schemas.py`: thêm trường `refresh_token`. Thêm schema `RefreshTokenRequest`.
+  - Cập nhật **tất cả 4 endpoint login** (`login/password`, `google`, `facebook`, `apple`) trong `app/api/auth.py` để trả về cả `access_token` lẫn `refresh_token`.
+  - Thêm endpoint mới `POST /v1/auth/refresh`: nhận `refresh_token`, kiểm tra loại token và trạng thái user, trả về cặp token mới (token rotation). Không cần migration DB — token hoàn toàn stateless (JWT).
+- **Sửa lỗi quyền riêng tư Memory**:
+  - Khắc phục bug trong `GET /v1/memories/{memory_id}` (`app/api/memories.py`): thiếu kiểm tra `deleted_at` — kỷ niệm đã bị xóa mềm vẫn có thể truy cập bởi người khác.
+  - Sắp xếp lại thứ tự kiểm tra quyền: `not found → deleted → blocked → private (level 1) → friends (level 2) → public expired (level 3)` cho logic rõ ràng và bảo mật hơn.
+- **Cập nhật Tài liệu API** (`api_documentation.md`):
+  - Section Auth: thêm tài liệu endpoint `POST /auth/refresh` chi tiết (request, response, bảng lỗi, quy trình đề xuất cho App). Cập nhật response mẫu login có `refresh_token`. Thêm response mẫu cho `GET /auth/me`.
+  - Section Chat & WebSocket: viết lại hoàn toàn với mô tả kiến trúc REST + WebSocket, bảng hướng dẫn kết nối WebSocket, payload chi tiết với bảng mô tả từng trường, hướng dẫn reconnect, response mẫu đầy đủ cho từng endpoint (`GET /conversations`, `POST /conversations`, `GET /conversations/{id}/messages`, `POST /conversations/{id}/messages`), giải thích ý nghĩa `is_pending` (Message Request), bảng lỗi thường gặp.
