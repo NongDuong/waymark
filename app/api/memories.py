@@ -263,7 +263,7 @@ def get_memory(
         raise HTTPException(status_code=403, detail="Not authorized to view this memory (User block is active)")
 
     # Check privacy level (1=private, 2=friends, 3=public)
-    from datetime import datetime
+    from datetime import datetime, timezone
     if memory.privacy_level == 1 and memory.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized to view this memory")
     
@@ -284,7 +284,7 @@ def get_memory(
 
     # Check public visibility expiration (level 3)
     if memory.privacy_level == 3 and memory.user_id != current_user.id:
-        if memory.visibility_expires_at and memory.visibility_expires_at < datetime.utcnow():
+        if memory.visibility_expires_at and memory.visibility_expires_at < datetime.now(timezone.utc):
             raise HTTPException(status_code=403, detail="This public memory has expired and is no longer visible to other users")
     
     # We return the memory. GeoAlchemy2 Geography fields aren't JSON serializable by default.

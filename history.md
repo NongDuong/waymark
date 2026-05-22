@@ -82,3 +82,7 @@
 - **Cập nhật Tài liệu API** (`api_documentation.md`):
   - Section Auth: thêm tài liệu endpoint `POST /auth/refresh` chi tiết (request, response, bảng lỗi, quy trình đề xuất cho App). Cập nhật response mẫu login có `refresh_token`. Thêm response mẫu cho `GET /auth/me`.
   - Section Chat & WebSocket: viết lại hoàn toàn với mô tả kiến trúc REST + WebSocket, bảng hướng dẫn kết nối WebSocket, payload chi tiết với bảng mô tả từng trường, hướng dẫn reconnect, response mẫu đầy đủ cho từng endpoint (`GET /conversations`, `POST /conversations`, `GET /conversations/{id}/messages`, `POST /conversations/{id}/messages`), giải thích ý nghĩa `is_pending` (Message Request), bảng lỗi thường gặp.
+- **Sửa lỗi 500 khi xem kỷ niệm của người khác** (`app/api/memories.py`):
+  - Khắc phục `TypeError: can't compare offset-naive and offset-aware datetimes` tại `GET /v1/memories/{memory_id}` dòng 287.
+  - Nguyên nhân: `datetime.utcnow()` trả về naive datetime (không có timezone), trong khi `memory.visibility_expires_at` từ DB là aware datetime (có timezone UTC) → Python không cho so sánh 2 loại này.
+  - Fix: thay `from datetime import datetime` → `from datetime import datetime, timezone` và đổi `datetime.utcnow()` → `datetime.now(timezone.utc)`. Lưu ý `datetime.utcnow()` đã bị deprecated từ Python 3.12.
