@@ -24,18 +24,33 @@ class ConnectionManager:
 
     def disconnect(self, websocket: WebSocket, user_id: str):
         if user_id in self.active_connections:
-            self.active_connections[user_id].remove(websocket)
+            try:
+                self.active_connections[user_id].remove(websocket)
+            except ValueError:
+                pass
             if not self.active_connections[user_id]:
                 del self.active_connections[user_id]
 
     async def send_personal_message(self, message: dict, user_id: str):
         if user_id in self.active_connections:
-            for connection in self.active_connections[user_id]:
-                await connection.send_json(message)
+            dead_connections = []
+            # Make a copy of the list to iterate safely since disconnect modifies active_connections
+            connections = list(self.active_connections[user_id])
+            for connection in connections:
+                try:
+                    await connection.send_json(message)
+                except Exception as e:
+                    print(f"Error sending WebSocket message to user {user_id}: {e}")
+                    dead_connections.append(connection)
+            
+            # Clean up dead connections
+            for conn in dead_connections:
+                self.disconnect(conn, user_id)
 
     async def broadcast_to_participants(self, message: dict, participant_ids: List[uuid.UUID]):
-        for uid in participant_ids:
-            await self.send_personal_message(message, str(uid))
+        import asyncio
+        tasks = [self.send_personal_message(message, str(uid)) for uid in participant_ids]
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 manager = ConnectionManager()
 
