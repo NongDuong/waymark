@@ -296,8 +296,6 @@ async def send_message(
         "message": jsonable_encoder(m_res)
     }
     
-    import asyncio
-    # We use non-blocking broadcast
-    asyncio.create_task(manager.broadcast_to_participants(ws_payload, participant_ids))
+    await manager.broadcast_to_participants(ws_payload, participant_ids)
             
     return m_res
