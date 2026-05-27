@@ -86,3 +86,12 @@
   - Khắc phục `TypeError: can't compare offset-naive and offset-aware datetimes` tại `GET /v1/memories/{memory_id}` dòng 287.
   - Nguyên nhân: `datetime.utcnow()` trả về naive datetime (không có timezone), trong khi `memory.visibility_expires_at` từ DB là aware datetime (có timezone UTC) → Python không cho so sánh 2 loại này.
   - Fix: thay `from datetime import datetime` → `from datetime import datetime, timezone` và đổi `datetime.utcnow()` → `datetime.now(timezone.utc)`. Lưu ý `datetime.utcnow()` đã bị deprecated từ Python 3.12.
+
+## 2026-05-27
+- **Sửa lỗi trùng lặp cuộc hội thoại (Conversation Deduplication)**:
+  - Nâng cấp API tạo cuộc hội thoại (`POST /v1/chat`). Đối với cuộc hội thoại trực tiếp (direct message 1-1), hệ thống tiến hành kiểm tra sự tồn tại trong DB.
+  - Nếu đã tồn tại cuộc hội thoại trực tiếp giữa hai người dùng này trước đó, hệ thống sẽ trả về ngay cuộc hội thoại cũ kèm flag `is_existing: true` thay vì tạo mới trùng lặp.
+  - Thêm thuộc tính `is_existing: bool = False` vào `ConversationResponse` trong `app/schemas.py` và khởi tạo trong `enrich_conversation` ở `app/api/chat.py`.
+- **Cập nhật tài liệu dự án**:
+  - Cập nhật chi tiết trường `is_existing` và logic kiểm tra trùng lặp trong [api_documentation.md](file:///d:/Duong/Waymark/waymark/api_documentation.md).
+

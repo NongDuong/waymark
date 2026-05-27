@@ -542,6 +542,7 @@ Trả về tất cả cuộc hội thoại mà user đang tham gia, sắp xếp 
     "created_at": "2026-05-20T08:00:00Z",
     "updated_at": "2026-05-22T10:30:00Z",
     "is_pending": false,
+    "is_existing": false,
     "other_user_id": "uuid-đối-phương",
     "other_user_username": "duongwaymark",
     "other_user_display_name": "Dương Waymark",
@@ -557,6 +558,7 @@ Trả về tất cả cuộc hội thoại mà user đang tham gia, sắp xếp 
 |--------|------|-------|
 | `conversation_type` | int | `1` = Chat riêng tư (direct, 2 người), `2` = Nhóm (group) |
 | `is_pending` | bool | `true` nếu đây là cuộc hội thoại direct mà hai người **chưa follow chéo nhau** (giống "Message Request" của Instagram). App có thể hiển thị riêng tab "Tin nhắn chờ". |
+| `is_existing` | bool | `true` nếu cuộc hội thoại này đã tồn tại trước đó khi gọi API tạo cuộc hội thoại (chỉ có ý nghĩa khi gọi `POST /conversations`). |
 | `other_user_*` | | Thông tin đối phương (chỉ có ở chat direct `conversation_type=1`). Bao gồm ID, username, tên hiển thị, avatar. |
 | `title` | string\|null | Với chat direct: tự động lấy tên đối phương. Với chat nhóm: tiêu đề do người tạo đặt. |
 | `last_message_text` | string\|null | Nội dung tin nhắn cuối cùng. Nếu là ảnh → hiển thị `"[Hình ảnh]"`. |
@@ -567,6 +569,11 @@ Trả về tất cả cuộc hội thoại mà user đang tham gia, sắp xếp 
 ### 8.4 `POST /conversations` 🔒 — Tạo cuộc hội thoại mới
 
 Tạo cuộc hội thoại riêng tư hoặc nhóm. Người tạo tự động được thêm làm thành viên.
+
+> **Lưu ý kiểm tra trùng lặp (Deduplication):**
+> Đối với cuộc hội thoại trực tiếp (`conversation_type = 1`), hệ thống sẽ kiểm tra xem đã tồn tại cuộc hội thoại trực tiếp nào giữa hai người dùng này chưa trước khi tạo bản ghi mới.
+> - Nếu **đã tồn tại**, API trả về thông tin cuộc hội thoại cũ kèm trường `"is_existing": true` trong response body.
+> - Nếu **chưa tồn tại**, hệ thống sẽ tạo cuộc hội thoại mới và trả về với `"is_existing": false`.
 
 **Request Body (JSON):**
 ```json
@@ -580,7 +587,7 @@ Tạo cuộc hội thoại riêng tư hoặc nhóm. Người tạo tự động 
 **Quy tắc:**
 | Điều kiện | Kết quả |
 |-----------|---------|
-| `participant_user_ids` có **1 người** | Tạo chat **riêng tư (direct)**, `conversation_type` tự động = `1` |
+| `participant_user_ids` có **1 người** | Tạo/lấy chat **riêng tư (direct)**, `conversation_type` tự động = `1` |
 | `participant_user_ids` có **nhiều người** | Tạo chat **nhóm (group)**, `conversation_type` tự động = `2` |
 | `title` | Tùy chọn. Chỉ có ý nghĩa với chat nhóm. Chat direct tự lấy tên đối phương. |
 
@@ -588,14 +595,15 @@ Tạo cuộc hội thoại riêng tư hoặc nhóm. Người tạo tự động 
 
 ```json
 {
-  "id": "uuid-mới-tạo",
+  "id": "uuid-mới-hoặc-đã-có",
   "conversation_type": 1,
-  "created_by": "uuid-của-bạn",
+  "created_by": "uuid-người-tạo",
   "title": "Dương Waymark",
   "last_message_id": null,
   "created_at": "2026-05-22T10:30:00Z",
   "updated_at": "2026-05-22T10:30:00Z",
   "is_pending": true,
+  "is_existing": false,
   "other_user_id": "uuid-đối-phương",
   "other_user_username": "duongwaymark",
   "other_user_display_name": "Dương Waymark",

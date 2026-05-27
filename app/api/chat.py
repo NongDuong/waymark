@@ -162,6 +162,7 @@ def enrich_conversation(c, current_user, db) -> schemas.ConversationResponse:
     )
     
     res.is_pending = False
+    res.is_existing = False
     
     if c.last_message_id:
         last_msg = db.query(models.Message).filter_by(id=c.last_message_id).first()
@@ -259,6 +260,28 @@ async def create_conversation(
     is_direct = len(conv_in.participant_user_ids) == 1
     c_type = 1 if is_direct else 2
     
+    # For direct conversations, check if one already exists
+    if is_direct:
+        other_user_id = conv_in.participant_user_ids[0]
+        existing_conv = db.query(models.Conversation).join(
+            models.ConversationParticipant,
+            models.Conversation.id == models.ConversationParticipant.conversation_id
+        ).filter(
+            models.Conversation.conversation_type == 1,
+            models.ConversationParticipant.user_id == current_user.id
+        ).filter(
+            models.Conversation.id.in_(
+                db.query(models.ConversationParticipant.conversation_id).filter(
+                    models.ConversationParticipant.user_id == other_user_id
+                )
+            )
+        ).first()
+        
+        if existing_conv:
+            res = enrich_conversation(existing_conv, current_user, db)
+            res.is_existing = True
+            return res
+
     new_conv = models.Conversation(
         id=uuid.uuid4(),
         conversation_type=c_type,

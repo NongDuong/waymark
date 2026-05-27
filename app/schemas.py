@@ -239,6 +239,7 @@ class ConversationResponse(BaseModel):
     
     # Message Request / Follower relationship metadata
     is_pending: bool = False
+    is_existing: bool = False
     other_user_id: Optional[UUID] = None
     other_user_username: Optional[str] = None
     other_user_display_name: Optional[str] = None
