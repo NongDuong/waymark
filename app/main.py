@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, Request
 from sqlalchemy.orm import Session
 from .database import engine, Base, get_db
 from . import models
@@ -26,9 +26,48 @@ app.include_router(collections.router, prefix="/v1/collections", tags=["collecti
 app.include_router(reports.router, prefix="/v1/reports", tags=["reports"])
 app.include_router(admin.router, prefix="/v1/admin", tags=["admin"])
 
-from fastapi.responses import HTMLResponse
+# Initialize Redis pub/sub for WebSocket cross-worker sync on each worker startup
+@app.on_event("startup")
+async def startup_event():
+    await chat.manager.init_redis()
+
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 import os
 import json
+
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=os.getenv("CORS_ORIGINS", "*").split(","),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Security middleware — block .env scanning, WordPress probes, credential file scanning
+@app.middleware("http")
+async def security_middleware(request: Request, call_next):
+    path = request.url.path.lower()
+    
+    # Block .env file scanning
+    if '.env' in path:
+        return JSONResponse(status_code=403, content={"detail": "Forbidden"})
+    
+    # Block WordPress scanning
+    if 'wp-admin' in path or 'wp-login' in path:
+        return JSONResponse(status_code=403, content={"detail": "Forbidden"})
+    
+    # Block credential/key file scanning
+    blocked_patterns = [
+        'service-account.json', 'credentials.json', 'gcp-key', 'firebase',
+        'google-key', 'keyfile.json', 'cloud-key', 'gcloud-service',
+        'application_default_credentials'
+    ]
+    if any(bp in path for bp in blocked_patterns):
+        return JSONResponse(status_code=403, content={"detail": "Forbidden"})
+    
+    return await call_next(request)
 
 @app.get("/", response_class=HTMLResponse)
 def read_root():

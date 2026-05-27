@@ -2,25 +2,70 @@ from fastapi import APIRouter, Depends, HTTPException, status, WebSocket, WebSoc
 from sqlalchemy.orm import Session
 import uuid
 import json
+import os
+import logging
+import asyncio
 from typing import List, Dict
+
+import redis.asyncio as aioredis
 
 from .. import schemas, models
 from ..database import get_db, SessionLocal
 from ..core.dependencies import get_current_user
 
+logger = logging.getLogger(__name__)
+REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379")
+
 router = APIRouter()
 
-# WebSocket Connection Manager
+# WebSocket Connection Manager — with Redis Pub/Sub for cross-worker sync
 class ConnectionManager:
     def __init__(self):
         # user_id -> list of active websockets (supports multiple devices)
         self.active_connections: Dict[str, List[WebSocket]] = {}
+        self._redis = None
+        self._pubsub = None
+        self._listener_task = None
+
+    async def init_redis(self):
+        """Initialize Redis pub/sub for cross-worker WebSocket communication.
+        Each uvicorn worker calls this on startup to subscribe to the shared channel."""
+        try:
+            self._redis = aioredis.from_url(REDIS_URL, decode_responses=True)
+            await self._redis.ping()
+            self._pubsub = self._redis.pubsub()
+            await self._pubsub.subscribe("chat:messages")
+            self._listener_task = asyncio.create_task(self._redis_listener())
+            logger.info("Redis pub/sub initialized for WebSocket cross-worker sync")
+        except Exception as e:
+            logger.error(f"Failed to init Redis pub/sub: {e}. Falling back to local-only WS.")
+            self._redis = None
+
+    async def _redis_listener(self):
+        """Background task: listen for messages from Redis and forward to local WS connections."""
+        try:
+            async for message in self._pubsub.listen():
+                if message["type"] == "message":
+                    try:
+                        data = json.loads(message["data"])
+                        for uid in data["participant_ids"]:
+                            if uid in self.active_connections:
+                                await self.send_personal_message(data["payload"], uid)
+                    except Exception as e:
+                        logger.error(f"Error processing Redis pub/sub message: {e}")
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"Redis listener crashed: {e}. Reconnecting in 5s...")
+            await asyncio.sleep(5)
+            self._listener_task = asyncio.create_task(self._redis_listener())
 
     async def connect(self, websocket: WebSocket, user_id: str):
         await websocket.accept()
         if user_id not in self.active_connections:
             self.active_connections[user_id] = []
         self.active_connections[user_id].append(websocket)
+        logger.info(f"WebSocket connected: user={user_id}")
 
     def disconnect(self, websocket: WebSocket, user_id: str):
         if user_id in self.active_connections:
@@ -30,26 +75,39 @@ class ConnectionManager:
                 pass
             if not self.active_connections[user_id]:
                 del self.active_connections[user_id]
+        logger.info(f"WebSocket disconnected: user={user_id}")
 
     async def send_personal_message(self, message: dict, user_id: str):
         if user_id in self.active_connections:
             dead_connections = []
-            # Make a copy of the list to iterate safely since disconnect modifies active_connections
             connections = list(self.active_connections[user_id])
             for connection in connections:
                 try:
                     await connection.send_json(message)
-                except Exception as e:
-                    print(f"Error sending WebSocket message to user {user_id}: {e}")
+                except (WebSocketDisconnect, RuntimeError, ConnectionError) as e:
+                    logger.warning(f"Dead WS connection for user {user_id}: {e}")
                     dead_connections.append(connection)
-            
+                except Exception as e:
+                    logger.error(f"Unexpected WS send error for user {user_id}: {e}")
+                    dead_connections.append(connection)
             # Clean up dead connections
             for conn in dead_connections:
                 self.disconnect(conn, user_id)
 
     async def broadcast_to_participants(self, message: dict, participant_ids: List[uuid.UUID]):
-        import asyncio
-        tasks = [self.send_personal_message(message, str(uid)) for uid in participant_ids]
+        """Publish message via Redis so ALL workers can deliver to their local WS connections."""
+        str_ids = [str(uid) for uid in participant_ids]
+        if self._redis:
+            try:
+                await self._redis.publish("chat:messages", json.dumps({
+                    "payload": message,
+                    "participant_ids": str_ids
+                }))
+                return
+            except Exception as e:
+                logger.error(f"Redis publish failed: {e}. Falling back to local broadcast.")
+        # Fallback: local-only broadcast (single worker or Redis down)
+        tasks = [self.send_personal_message(message, uid) for uid in str_ids]
         await asyncio.gather(*tasks, return_exceptions=True)
 
 manager = ConnectionManager()
@@ -66,10 +124,28 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
     await manager.connect(websocket, user_id)
     try:
         while True:
-            # Keep connection alive, we don't expect messages from client via WS for now 
-            # (we use REST POST for sending to keep business logic centralized)
-            data = await websocket.receive_text()
+            try:
+                # Wait for client data with timeout for heartbeat detection
+                data = await asyncio.wait_for(
+                    websocket.receive_text(),
+                    timeout=45.0
+                )
+                # Client sends "pong" as heartbeat response — just continue
+                if data == "pong":
+                    continue
+            except asyncio.TimeoutError:
+                # No data in 45s — send ping to check if connection is alive
+                try:
+                    await websocket.send_json({"type": "ping"})
+                except Exception:
+                    logger.warning(f"Ping failed for user {user_id}, closing dead connection")
+                    break
     except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        logger.error(f"WebSocket error for user {user_id}: {e}")
+    finally:
+        # ALWAYS cleanup — handles WebSocketDisconnect, ConnectionReset, etc.
         manager.disconnect(websocket, user_id)
 
 
