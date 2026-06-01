@@ -17,3 +17,5 @@ celery==5.3.6
 boto3==1.33.0
 requests==2.31.0
 Pillow==10.1.0
+pillow-heif>=0.13.0
+

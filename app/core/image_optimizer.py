@@ -1,5 +1,9 @@
 import io
 from PIL import Image, ImageOps
+from pillow_heif import register_heif_opener
+
+# Register HEIF opener with Pillow to support iPhone HEIC images
+register_heif_opener()
 
 def optimize_image(file_data: bytes, max_width: int = 1600, max_height: int = 1600, quality: int = 80) -> tuple[bytes, str]:
     """
