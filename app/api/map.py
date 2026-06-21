@@ -49,15 +49,16 @@ def get_map_pins(
     
     friend_ids = [f[0] for f in friends_subquery]
 
-    # Query memories within radius
+    # Query memories within radius — exclude current user's own memories (fetched separately via profile)
     query = db.query(
         models.Memory,
         func.ST_Y(models.Memory.location.cast(models.Geometry)).label('lat'),
         func.ST_X(models.Memory.location.cast(models.Geometry)).label('lng')
     ).filter(
-        func.ST_DWithin(models.Memory.location.cast(Geography), center_point, radius)
+        func.ST_DWithin(models.Memory.location.cast(Geography), center_point, radius),
+        models.Memory.deleted_at.is_(None),
+        models.Memory.user_id != current_user.id  # Exclude own memories
     ).filter(
-        (models.Memory.user_id == current_user.id) |
         ((models.Memory.privacy_level == 3) & (models.Memory.visibility_expires_at >= datetime.utcnow())) |
         ((models.Memory.privacy_level == 2) & models.Memory.user_id.in_(friend_ids))
     )

@@ -311,6 +311,7 @@ def get_user_memories(
     memories_data = query.order_by(models.Memory.taken_at.desc()).offset(skip).limit(limit).all()
     
     from .media import get_r2_url
+    from .memories import populate_author_info
     results = []
     for memory, lat, lng in memories_data:
         likes_count = db.query(func.count(models.Like.memory_id)).filter(models.Like.memory_id == memory.id).scalar() or 0
@@ -334,6 +335,8 @@ def get_user_memories(
             m_schema.file_url = get_r2_url(m.file_url)
             res.media.append(m_schema)
         
+        # Populate author info (username, display_name, avatar_url)
+        populate_author_info(res, db)
         results.append(res)
         
     return results

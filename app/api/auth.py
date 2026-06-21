@@ -12,18 +12,24 @@ router = APIRouter()
 
 @router.post("/signup/email", response_model=schemas.UserResponse)
 def signup(user_in: schemas.UserCreate, db: Session = Depends(get_db)):
-    db_user = db.query(models.User).filter(
-        (models.User.primary_email == user_in.email) | 
-        (models.User.username == user_in.username)
+    # Check email duplicate
+    email_exists = db.query(models.User).filter(
+        models.User.primary_email == user_in.email
     ).first()
+    if email_exists:
+        raise HTTPException(status_code=400, detail="Email đã được đăng ký. Vui lòng sử dụng email khác.")
     
-    if db_user:
-        raise HTTPException(status_code=400, detail="Email or username already registered")
-        
-    # Fake saving password (in a real app we'd add password_hash column to DB)
-    # The docx didn't specify password column in user table, so we simulate it or we can add it to user table.
-    # For now, let's assume we just create the user. 
-    # To make it work, I'll need to add password_hash to the User model. I'll patch models.py in the next step.
+    # Check username duplicate
+    username_exists = db.query(models.User).filter(
+        models.User.username == user_in.username
+    ).first()
+    if username_exists:
+        raise HTTPException(status_code=400, detail="Tên người dùng đã tồn tại. Vui lòng chọn tên khác.")
+    
+    # Validate password length
+    if len(user_in.password) < 6:
+        raise HTTPException(status_code=400, detail="Mật khẩu phải có ít nhất 6 ký tự.")
+    
     hashed_password = security.get_password_hash(user_in.password)
     
     new_user = models.User(
@@ -33,7 +39,12 @@ def signup(user_in: schemas.UserCreate, db: Session = Depends(get_db)):
         hashed_password=hashed_password
     )
     db.add(new_user)
-    db.flush() # Flush to populate new_user.id
+    
+    try:
+        db.flush() # Flush to populate new_user.id
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Lỗi tạo tài khoản: {str(e)}")
     
     # Create UserProfile immediately during registration
     display_name = user_in.display_name or user_in.username
@@ -42,7 +53,13 @@ def signup(user_in: schemas.UserCreate, db: Session = Depends(get_db)):
         display_name=display_name
     )
     db.add(new_profile)
-    db.commit()
+    
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Lỗi lưu hồ sơ người dùng: {str(e)}")
+    
     db.refresh(new_user)
     
     return new_user
