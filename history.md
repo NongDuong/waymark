@@ -87,6 +87,28 @@
   - Nguyên nhân: `datetime.utcnow()` trả về naive datetime (không có timezone), trong khi `memory.visibility_expires_at` từ DB là aware datetime (có timezone UTC) → Python không cho so sánh 2 loại này.
   - Fix: thay `from datetime import datetime` → `from datetime import datetime, timezone` và đổi `datetime.utcnow()` → `datetime.now(timezone.utc)`. Lưu ý `datetime.utcnow()` đã bị deprecated từ Python 3.12.
 
+## 2026-06-26
+- **FCM Push Notification (thật)**:
+  - Thêm `firebase-admin==6.3.0` vào `requirements.txt`.
+  - Lưu Firebase Service Account (`firebase_service_account.json`) tại thư mục gốc dự án.
+  - Cập nhật `app/worker.py`: khởi tạo Firebase Admin SDK một lần tại module load. Task `send_notification` giờ thực hiện 2 bước: (1) lưu bản ghi vào DB như cũ, (2) query tất cả `DeviceToken` của user nhận rồi gửi FCM thật qua `firebase_admin.messaging.send()`. Token hết hạn (`UnregisteredError`) được tự động xoá khỏi DB.
+- **API Đổi mật khẩu**:
+  - Thêm `POST /v1/auth/change-password` (🔒 yêu cầu đăng nhập). Nhận `current_password` + `new_password`, kiểm tra MK cũ đúng trước khi lưu MK mới.
+- **API Quên / Đặt lại mật khẩu**:
+  - Thêm `POST /v1/auth/forgot-password` (🔓 không cần đăng nhập). Nhận `email`, tạo reset token ngẫu nhiên (`secrets.token_urlsafe(32)`) hiệu lực 30 phút, vô hiệu hoá token cũ chưa dùng. Hiện trả về `reset_token` trong response để test; production cần tích hợp gửi email.
+  - Thêm `POST /v1/auth/reset-password` (🔓 không cần đăng nhập). Nhận `token` + `new_password`, validate hết hạn, đã dùng, sau đó đặt lại mật khẩu và đánh dấu token đã dùng.
+  - Thêm model `PasswordResetToken` vào `app/models.py`.
+- **API Lưu Device Token (FCM)**:
+  - Thêm `POST /v1/auth/device-token` (🔒 yêu cầu đăng nhập). Nhận `token` (FCM registration token) + `platform` (`ios`/`android`/`web`). Upsert: nếu token đã tồn tại và thuộc thiết bị khác đăng nhập → cập nhật `user_id`. Cho phép một user có nhiều device token (nhiều thiết bị).
+  - Thêm model `DeviceToken` vào `app/models.py`.
+- **Map API hỗ trợ khách (chưa đăng nhập)**:
+  - Sửa `GET /v1/map/pins`: chuyển từ `get_current_user` (bắt buộc) sang `get_optional_user` (tuỳ chọn).
+  - Khách không có token → chỉ nhận pin `privacy_level=3` (công khai) còn trong hạn hiển thị 30 ngày.
+  - Người dùng đã đăng nhập → giữ nguyên logic cũ: public + bạn bè, loại trừ blocked.
+  - Thêm hàm `get_optional_user` vào `app/core/dependencies.py` (dùng `HTTPBearer(auto_error=False)`).
+- **Database Migration**:
+  - Migration `h7i8j9k0l1m2`: tạo bảng `device_tokens` (lưu FCM tokens) và `password_reset_tokens` (lưu token quên MK) với index phù hợp.
+
 ## 2026-05-27
 - **Sửa lỗi trùng lặp cuộc hội thoại (Conversation Deduplication)**:
   - Nâng cấp API tạo cuộc hội thoại (`POST /v1/chat`). Đối với cuộc hội thoại trực tiếp (direct message 1-1), hệ thống tiến hành kiểm tra sự tồn tại trong DB.

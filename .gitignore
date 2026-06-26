@@ -160,3 +160,7 @@ Thumbs.db
 *.njsproj
 *.sln
 *.swp
+
+# Firebase service account (contains private key — never commit)
+firebase_service_account.json
+*service_account*.json

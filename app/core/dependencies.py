@@ -1,7 +1,8 @@
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
+from typing import Optional
 import uuid
 from ..database import get_db
 from ..models import User
@@ -9,6 +10,7 @@ from .security import SECRET_KEY, ALGORITHM
 
 # Dùng HTTPBearer thay cho OAuth2PasswordBearer vì login endpoint giờ nhận JSON
 bearer_scheme = HTTPBearer()
+optional_bearer_scheme = HTTPBearer(auto_error=False)
 
 def verify_token(token: str) -> str:
     try:
@@ -44,6 +46,26 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(bearer_
     if user.status == 0: # 0 means inactive or blocked
         raise HTTPException(status_code=400, detail="Inactive user")
     return user
+
+def get_optional_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(optional_bearer_scheme),
+    db: Session = Depends(get_db)
+) -> Optional[User]:
+    """Returns the authenticated user or None if no/invalid token provided."""
+    if credentials is None:
+        return None
+    try:
+        payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id_str: str = payload.get("sub")
+        if user_id_str is None:
+            return None
+        user_uuid = uuid.UUID(user_id_str)
+        user = db.query(User).filter(User.id == user_uuid).first()
+        if user is None or user.status == 0:
+            return None
+        return user
+    except (JWTError, ValueError):
+        return None
 
 def get_current_admin_user(current_user: User = Depends(get_current_user)) -> User:
     is_super_admin = getattr(current_user, "is_admin", False)

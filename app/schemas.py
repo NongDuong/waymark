@@ -354,6 +354,21 @@ class AdminUserResponse(BaseModel):
     class Config:
         from_attributes = True
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+class DeviceTokenRequest(BaseModel):
+    token: str
+    platform: Optional[str] = None  # 'ios', 'android', 'web'
+
 # Resolve forward references for MemoryResponse -> MediaResponse
 MemoryResponse.model_rebuild()
 MemoryDetailResponse.model_rebuild()

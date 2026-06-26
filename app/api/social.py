@@ -24,12 +24,14 @@ def like_memory(
     db.add(new_like)
     db.commit()
     
-    # Notify memory owner (dummy)
+    # Notify memory owner
     memory = db.query(models.Memory).filter_by(id=memory_id).first()
     if memory and memory.user_id != current_user.id:
+        sender_profile = db.query(models.UserProfile).filter_by(user_id=current_user.id).first()
+        sender_name = (sender_profile.display_name if sender_profile else None) or current_user.username
         send_notification.delay(
             str(memory.user_id),
-            f"User {current_user.username} liked your memory.",
+            f"{sender_name} đã thích kỷ niệm của bạn.",
             sender_id=str(current_user.id),
             notification_type=1,
             reference_id=str(memory_id)
@@ -145,9 +147,11 @@ def add_comment(
     
     # Notify memory owner
     if memory.user_id != current_user.id:
+        sender_profile = db.query(models.UserProfile).filter_by(user_id=current_user.id).first()
+        sender_name = (sender_profile.display_name if sender_profile else None) or current_user.username
         send_notification.delay(
             str(memory.user_id),
-            f"User {current_user.username} commented on your memory.",
+            f"{sender_name} đã bình luận về kỷ niệm của bạn.",
             sender_id=str(current_user.id),
             notification_type=2,
             reference_id=str(memory_id)
@@ -332,9 +336,11 @@ def follow_user(
         
     db.commit()
     
+    sender_profile = db.query(models.UserProfile).filter_by(user_id=current_user.id).first()
+    sender_name = (sender_profile.display_name if sender_profile else None) or current_user.username
     send_notification.delay(
         str(follow_in.target_user_id),
-        f"User {current_user.username} started following you.",
+        f"{sender_name} đã bắt đầu theo dõi bạn.",
         sender_id=str(current_user.id),
         notification_type=3,
         reference_id=str(current_user.id)

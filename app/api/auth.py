@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from datetime import timedelta
+from datetime import timedelta, datetime
 import uuid
+import secrets
 
 from .. import schemas, models
 from ..database import get_db
@@ -138,6 +139,118 @@ def get_auth_config():
         "facebook_app_id": os.getenv("FACEBOOK_APP_ID", ""),
         "apple_client_id": os.getenv("APPLE_CLIENT_ID", "")
     }
+
+@router.post("/change-password", status_code=200)
+def change_password(
+    body: schemas.ChangePasswordRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Đổi mật khẩu — yêu cầu đăng nhập."""
+    if not current_user.hashed_password:
+        raise HTTPException(status_code=400, detail="Tài khoản không sử dụng mật khẩu (đăng nhập mạng xã hội).")
+    if not security.verify_password(body.current_password, current_user.hashed_password):
+        raise HTTPException(status_code=400, detail="Mật khẩu hiện tại không đúng.")
+    if len(body.new_password) < 6:
+        raise HTTPException(status_code=400, detail="Mật khẩu mới phải có ít nhất 6 ký tự.")
+    current_user.hashed_password = security.get_password_hash(body.new_password)
+    db.commit()
+    return {"message": "Đổi mật khẩu thành công."}
+
+
+@router.post("/forgot-password", status_code=200)
+def forgot_password(body: schemas.ForgotPasswordRequest, db: Session = Depends(get_db)):
+    """Yêu cầu đặt lại mật khẩu. Trả về token reset (tích hợp email sau)."""
+    user = db.query(models.User).filter(models.User.primary_email == body.email).first()
+    if not user:
+        # Không tiết lộ email tồn tại hay không
+        return {"message": "Nếu email tồn tại, bạn sẽ nhận được hướng dẫn đặt lại mật khẩu."}
+
+    # Vô hiệu hoá token cũ chưa dùng
+    db.query(models.PasswordResetToken).filter(
+        models.PasswordResetToken.user_id == user.id,
+        models.PasswordResetToken.used_at.is_(None)
+    ).delete(synchronize_session=False)
+
+    reset_token = secrets.token_urlsafe(32)
+    expiry = datetime.utcnow() + timedelta(minutes=30)
+    prt = models.PasswordResetToken(
+        id=uuid.uuid4(),
+        user_id=user.id,
+        token=reset_token,
+        expires_at=expiry
+    )
+    db.add(prt)
+    db.commit()
+
+    # TODO: gửi email chứa reset_token
+    # Trả về token tạm thời để test (xoá trong production)
+    return {
+        "message": "Token đặt lại mật khẩu đã được tạo.",
+        "reset_token": reset_token,
+        "expires_in_minutes": 30
+    }
+
+
+@router.post("/reset-password", status_code=200)
+def reset_password(body: schemas.ResetPasswordRequest, db: Session = Depends(get_db)):
+    """Đặt lại mật khẩu bằng token nhận được từ forgot-password."""
+    if len(body.new_password) < 6:
+        raise HTTPException(status_code=400, detail="Mật khẩu mới phải có ít nhất 6 ký tự.")
+
+    prt = db.query(models.PasswordResetToken).filter(
+        models.PasswordResetToken.token == body.token
+    ).first()
+
+    if not prt:
+        raise HTTPException(status_code=400, detail="Token không hợp lệ.")
+    if prt.used_at is not None:
+        raise HTTPException(status_code=400, detail="Token đã được sử dụng.")
+    if prt.expires_at < datetime.utcnow():
+        raise HTTPException(status_code=400, detail="Token đã hết hạn.")
+
+    user = db.query(models.User).filter(models.User.id == prt.user_id).first()
+    if not user:
+        raise HTTPException(status_code=400, detail="Người dùng không tồn tại.")
+
+    user.hashed_password = security.get_password_hash(body.new_password)
+    prt.used_at = datetime.utcnow()
+    db.commit()
+    return {"message": "Đặt lại mật khẩu thành công."}
+
+
+@router.post("/device-token", status_code=200)
+def register_device_token(
+    body: schemas.DeviceTokenRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Lưu FCM device token để nhận thông báo push notification."""
+    if not body.token or not body.token.strip():
+        raise HTTPException(status_code=400, detail="Token không được để trống.")
+
+    existing = db.query(models.DeviceToken).filter(
+        models.DeviceToken.token == body.token
+    ).first()
+
+    if existing:
+        # Cập nhật chủ sở hữu nếu token thuộc thiết bị mới đăng nhập
+        if existing.user_id != current_user.id:
+            existing.user_id = current_user.id
+            existing.platform = body.platform
+            db.commit()
+        return {"message": "Device token đã được lưu."}
+
+    new_token = models.DeviceToken(
+        id=uuid.uuid4(),
+        user_id=current_user.id,
+        token=body.token.strip(),
+        platform=body.platform
+    )
+    db.add(new_token)
+    db.commit()
+    return {"message": "Device token đã được lưu."}
+
 
 @router.post("/google", response_model=schemas.Token)
 def login_google(google_in: schemas.GoogleLoginRequest, db: Session = Depends(get_db)):

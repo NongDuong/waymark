@@ -18,6 +18,8 @@
 10. [Bộ sưu tập (Collections)](#10-bộ-sưu-tập-collections)
 11. [Báo cáo (Reports)](#11-báo-cáo-reports)
 
+> **Ký hiệu:** 🔒 = Cần Bearer Token | 🔓 = Không cần Token
+
 ---
 
 ## 1. XÁC THỰC (AUTH)
@@ -166,6 +168,107 @@ Trả về Client ID của Google, Facebook, Apple để App khởi tạo SDK đ
 
 ---
 
+### `POST /auth/change-password` 🔒 — Đổi mật khẩu
+Đổi mật khẩu cho tài khoản đang đăng nhập. Không áp dụng cho tài khoản đăng nhập bằng Google/Facebook/Apple (không có mật khẩu).
+
+**Request Body (JSON):**
+```json
+{
+  "current_password": "OldPassword123",
+  "new_password": "NewPassword456"
+}
+```
+
+**Response 200:**
+```json
+{ "message": "Đổi mật khẩu thành công." }
+```
+
+**Lỗi thường gặp:**
+| Mã | Chi tiết |
+|----|---------|
+| 400 | `Mật khẩu hiện tại không đúng.` |
+| 400 | `Mật khẩu mới phải có ít nhất 6 ký tự.` |
+| 400 | `Tài khoản không sử dụng mật khẩu (đăng nhập mạng xã hội).` |
+
+---
+
+### `POST /auth/forgot-password` 🔓 — Quên mật khẩu
+Tạo token đặt lại mật khẩu cho email đã đăng ký. Hiện tại token được trả về trực tiếp trong response để tiện tích hợp (production sẽ gửi qua email).
+
+**Request Body (JSON):**
+```json
+{ "email": "user@example.com" }
+```
+
+**Response 200:**
+```json
+{
+  "message": "Token đặt lại mật khẩu đã được tạo.",
+  "reset_token": "abc123xyz...",
+  "expires_in_minutes": 30
+}
+```
+
+> **Lưu ý:** Nếu email không tồn tại, response vẫn trả về `200` với thông báo chung — để tránh tiết lộ email nào đã đăng ký.  
+> Token có hiệu lực **30 phút** và chỉ dùng được **một lần**.
+
+---
+
+### `POST /auth/reset-password` 🔓 — Đặt lại mật khẩu
+Sử dụng token nhận từ `forgot-password` để đặt mật khẩu mới.
+
+**Request Body (JSON):**
+```json
+{
+  "token": "abc123xyz...",
+  "new_password": "NewPassword789"
+}
+```
+
+**Response 200:**
+```json
+{ "message": "Đặt lại mật khẩu thành công." }
+```
+
+**Lỗi thường gặp:**
+| Mã | Chi tiết |
+|----|---------|
+| 400 | `Token không hợp lệ.` |
+| 400 | `Token đã được sử dụng.` |
+| 400 | `Token đã hết hạn.` |
+| 400 | `Mật khẩu mới phải có ít nhất 6 ký tự.` |
+
+---
+
+### `POST /auth/device-token` 🔒 — Lưu FCM Device Token
+Lưu FCM registration token của thiết bị để nhận push notification. Gọi API này ngay sau khi đăng nhập thành công và mỗi khi FCM SDK cấp token mới. Một user có thể có nhiều token (nhiều thiết bị).
+
+**Request Body (JSON):**
+```json
+{
+  "token": "fMtY8k3Ps0c:APA91bH...",
+  "platform": "android"
+}
+```
+
+| Field | Type | Mô tả |
+|-------|------|-------|
+| `token` | string | FCM registration token từ Firebase SDK (bắt buộc) |
+| `platform` | string | `ios` / `android` / `web` (tùy chọn) |
+
+**Response 200:**
+```json
+{ "message": "Device token đã được lưu." }
+```
+
+> **Quy trình đề xuất:**
+> 1. Lấy FCM token từ Firebase SDK (`getToken()`).
+> 2. Gọi `POST /auth/device-token` ngay sau đăng nhập.
+> 3. Lắng nghe sự kiện `onTokenRefresh` của Firebase SDK → gọi lại API khi token thay đổi.
+
+---
+
 ## 2. HỒ SƠ NGƯỜI DÙNG (PROFILE)
 
 ### `GET /profile/me` 🔒 — Lấy hồ sơ của bản thân
@@ -258,8 +361,8 @@ Trả về tóm tắt "Tôi đã đi qua bao nhiêu tỉnh/thành, quận/huyệ
 
 ## 3. BẢN ĐỒ (MAP)
 
-### `GET /map/pins` 🔒 — Lấy ghim kỷ niệm xung quanh (Bản đồ cá nhân hóa)
-**Mục đích:** Dùng cho màn hình **Bản đồ chính** của App. Trả về tất cả kỷ niệm trong bán kính xung quanh vị trí người dùng, bao gồm cả kỷ niệm của bản thân, bạn bè và công khai. Tự động **lọc bỏ** kỷ niệm của người đã chặn nhau.
+### `GET /map/pins` 🔓🔒 — Lấy ghim kỷ niệm xung quanh
+**Mục đích:** Dùng cho màn hình **Bản đồ chính** của App. Hỗ trợ cả khách chưa đăng nhập lẫn người dùng đã đăng nhập.
 
 **Query Parameters:**
 | Param | Type | Mặc định | Mô tả |
@@ -268,11 +371,14 @@ Trả về tóm tắt "Tôi đã đi qua bao nhiêu tỉnh/thành, quận/huyệ
 | `lng` | float | **Bắt buộc** | Kinh độ trung tâm |
 | `radius` | float | 1000 | Bán kính (mét) |
 
-**Quy tắc hiển thị:**
-- ✅ Kỷ niệm của **bản thân** (mọi chế độ riêng tư)
+**Quy tắc hiển thị — Chưa đăng nhập (không gửi token):**
+- ✅ Kỷ niệm **công khai** (`privacy_level=3`) còn trong hạn hiển thị 30 ngày
+
+**Quy tắc hiển thị — Đã đăng nhập (gửi Bearer token):**
 - ✅ Kỷ niệm của **bạn bè** (chế độ bạn bè + công khai)
 - ✅ Kỷ niệm **công khai** của người lạ (còn hạn hiển thị 30 ngày)
 - ❌ Kỷ niệm của người đã **chặn nhau**
+- ❌ Kỷ niệm của chính user (lấy riêng qua Profile API)
 
 **Trả về tối đa:** 100 ghim.
 

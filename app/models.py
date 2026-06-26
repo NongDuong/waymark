@@ -204,7 +204,7 @@ class Notification(Base):
 
 class Report(Base):
     __tablename__ = "reports"
-    
+
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     reporter_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
     target_id = Column(UUID(as_uuid=True))  # ID of Memory or Comment
@@ -214,3 +214,23 @@ class Report(Base):
     status = Column(SmallInteger, default=1) # 1 = Pending, 2 = Resolved (action taken), 3 = Dismissed
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class DeviceToken(Base):
+    __tablename__ = "device_tokens"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    token = Column(String(500), unique=True, nullable=False)
+    platform = Column(String(20), nullable=True)  # 'ios', 'android', 'web'
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    token = Column(String(100), unique=True, nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    used_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)

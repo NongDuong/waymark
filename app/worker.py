@@ -1,9 +1,42 @@
 import os
 import time
+import json
 from celery import Celery
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Initialize Firebase Admin SDK once at module import
+import firebase_admin
+from firebase_admin import credentials as fb_credentials, messaging as fb_messaging
+
+_firebase_initialized = False
+
+def _init_firebase():
+    global _firebase_initialized
+    if _firebase_initialized:
+        return
+    try:
+        # Priority 1: read from FIREBASE_SERVICE_ACCOUNT_JSON env var (production)
+        sa_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
+        if sa_json:
+            sa_dict = json.loads(sa_json)
+            cred = fb_credentials.Certificate(sa_dict)
+        else:
+            # Priority 2: fallback to local file (development only, never commit this file)
+            sa_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "firebase_service_account.json")
+            if not os.path.exists(sa_path):
+                print("Firebase: no FIREBASE_SERVICE_ACCOUNT_JSON env var and no local file found. FCM disabled.")
+                return
+            cred = fb_credentials.Certificate(sa_path)
+
+        firebase_admin.initialize_app(cred)
+        _firebase_initialized = True
+        print("Firebase Admin SDK initialized successfully.")
+    except Exception as e:
+        print(f"Firebase Admin SDK initialization failed: {e}")
+
+_init_firebase()
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 
@@ -29,6 +62,13 @@ def process_media(memory_id: str):
     print(f"Media processing for memory {memory_id} completed.")
     return True
 
+_NOTIFICATION_TITLES = {
+    1: "Lượt thích mới",
+    2: "Bình luận mới",
+    3: "Người theo dõi mới",
+    4: "Tin nhắn mới",
+}
+
 @celery_app.task(name="tasks.send_notification")
 def send_notification(
     user_id: str,
@@ -37,33 +77,71 @@ def send_notification(
     notification_type: int = 1,
     reference_id: str = None
 ):
-    print(f"Sending push notification to user {user_id}: {message}")
-    
-    # Save notification to PostgreSQL database
+    print(f"Sending notification to user {user_id}: {message}")
+
     from app.database import SessionLocal
-    from app.models import Notification
-    import uuid
-    
+    from app.models import Notification, DeviceToken
+    import uuid as uuid_mod
+
     db = SessionLocal()
     try:
+        # 1. Save notification record to DB
         notif = Notification(
-            id=uuid.uuid4(),
-            user_id=uuid.UUID(user_id),
-            sender_id=uuid.UUID(sender_id) if sender_id else None,
+            id=uuid_mod.uuid4(),
+            user_id=uuid_mod.UUID(user_id),
+            sender_id=uuid_mod.UUID(sender_id) if sender_id else None,
             notification_type=notification_type,
             message=message,
-            reference_id=uuid.UUID(reference_id) if reference_id else None,
+            reference_id=uuid_mod.UUID(reference_id) if reference_id else None,
             is_read=False
         )
         db.add(notif)
         db.commit()
-        print(f"Notification successfully saved to database for user_id: {user_id}")
+        print(f"Notification saved to DB for user_id: {user_id}")
+
+        # 2. Send FCM push notifications to all device tokens of the recipient
+        device_tokens = db.query(DeviceToken).filter(
+            DeviceToken.user_id == uuid_mod.UUID(user_id)
+        ).all()
+
+        if not device_tokens:
+            print(f"No device tokens registered for user {user_id}, skipping FCM.")
+            return True
+
+        title = _NOTIFICATION_TITLES.get(notification_type, "Thông báo mới")
+        data_payload = {
+            "notification_type": str(notification_type),
+            "reference_id": reference_id or "",
+            "sender_id": sender_id or "",
+        }
+
+        failed_tokens = []
+        for dt in device_tokens:
+            try:
+                msg = fb_messaging.Message(
+                    notification=fb_messaging.Notification(title=title, body=message),
+                    data=data_payload,
+                    token=dt.token,
+                )
+                response = fb_messaging.send(msg)
+                print(f"FCM sent to token {dt.token[:20]}...: {response}")
+            except fb_messaging.UnregisteredError:
+                print(f"FCM token expired/unregistered, removing: {dt.token[:20]}...")
+                failed_tokens.append(dt.id)
+            except Exception as e:
+                print(f"FCM send error for token {dt.token[:20]}...: {e}")
+
+        # Clean up expired tokens
+        if failed_tokens:
+            db.query(DeviceToken).filter(DeviceToken.id.in_(failed_tokens)).delete(synchronize_session=False)
+            db.commit()
+
     except Exception as e:
         db.rollback()
-        print(f"Failed to save notification: {str(e)}")
+        print(f"send_notification task error: {e}")
     finally:
         db.close()
-        
+
     return True
 
 @celery_app.task(name="tasks.reverse_geocode")
