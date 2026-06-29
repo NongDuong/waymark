@@ -369,6 +369,9 @@ class DeviceTokenRequest(BaseModel):
     token: str
     platform: Optional[str] = None  # 'ios', 'android', 'web'
 
+class LogoutRequest(BaseModel):
+    device_token: Optional[str] = None
+
 # Resolve forward references for MemoryResponse -> MediaResponse
 MemoryResponse.model_rebuild()
 MemoryDetailResponse.model_rebuild()

@@ -429,6 +429,22 @@ def login_facebook(fb_in: schemas.FacebookLoginRequest, db: Session = Depends(ge
     return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer", "user_id": str(user.id)}
 
 
+@router.post("/logout")
+def logout(
+    body: schemas.LogoutRequest,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Logout: xóa device token của thiết bị hiện tại khỏi DB để không nhận push notification nữa."""
+    if body.device_token:
+        db.query(models.DeviceToken).filter(
+            models.DeviceToken.user_id == current_user.id,
+            models.DeviceToken.token == body.device_token
+        ).delete(synchronize_session=False)
+        db.commit()
+    return {"message": "Đăng xuất thành công."}
+
+
 @router.post("/apple", response_model=schemas.Token)
 def login_apple(apple_in: schemas.AppleLoginRequest, db: Session = Depends(get_db)):
     from jose import jwt
