@@ -267,6 +267,31 @@ Lưu FCM registration token của thiết bị để nhận push notification. G
 > 1. Lấy FCM token từ Firebase SDK (`getToken()`).
 > 2. Gọi `POST /auth/device-token` ngay sau đăng nhập.
 > 3. Lắng nghe sự kiện `onTokenRefresh` của Firebase SDK → gọi lại API khi token thay đổi.
+> 4. Khi logout, gọi `POST /auth/logout` với `device_token` để xóa thiết bị khỏi danh sách nhận thông báo.
+
+---
+
+### `POST /auth/logout` 🔒 — Đăng xuất
+
+Xóa FCM device token của thiết bị hiện tại khỏi DB. Sau khi gọi API này, thiết bị đó sẽ không nhận push notification nữa.
+
+**Request Body (JSON):**
+```json
+{
+  "device_token": "fMtY8k3Ps0c:APA91bH..."
+}
+```
+
+| Field | Bắt buộc | Mô tả |
+|-------|----------|-------|
+| `device_token` | ❌ | FCM token của thiết bị muốn xóa. Nếu không truyền, chỉ logout phiên làm việc, không xóa token nào. |
+
+**Response 200:**
+```json
+{ "message": "Đăng xuất thành công." }
+```
+
+> **Lưu ý:** JWT access token vẫn tồn tại đến khi hết hạn (server không có blacklist JWT). Client cần tự xóa token khỏi bộ nhớ cục bộ.
 
 ---
 
@@ -1044,6 +1069,15 @@ FirebaseMessaging.onMessage.listen((RemoteMessage message) {
   final refId = message.data['reference_id'];
   // Điều hướng theo type: 1=memory, 2=memory, 3=profile, 4=chat
 });
+```
+
+**Bước 5 — Logout: xóa device token**:
+```dart
+// Trước khi clear local storage / JWT
+await api.post('/v1/auth/logout', {
+  'device_token': currentFcmToken,
+});
+// Sau đó xóa JWT khỏi local storage
 ```
 
 ---
