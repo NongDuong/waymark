@@ -259,20 +259,15 @@ def login_google(google_in: schemas.GoogleLoginRequest, db: Session = Depends(ge
     
     token = google_in.credential
     try:
-        # Decode Google ID token with signature-less local decode as stable fallback
-        try:
-            certs = requests.get("https://www.googleapis.com/oauth2/v3/certs", timeout=3).json()
-            payload = jwt.decode(token, certs, audience=None, options={"verify_signature": False, "verify_aud": False, "verify_exp": False})
-        except Exception:
-            payload = jwt.decode(token, "", options={"verify_signature": False, "verify_aud": False, "verify_exp": False})
-            
+        # get_unverified_claims avoids python-jose's at_hash check (requires access_token we don't have)
+        payload = jwt.get_unverified_claims(token)
         email = payload.get("email")
         name = payload.get("name")
         picture = payload.get("picture")
-        
+
         if not email:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Google token does not contain email")
-            
+
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid Google token: {str(e)}")
         
