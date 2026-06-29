@@ -17,6 +17,7 @@
 9. [Đa phương tiện (Media)](#9-đa-phương-tiện-media)
 10. [Bộ sưu tập (Collections)](#10-bộ-sưu-tập-collections)
 11. [Báo cáo (Reports)](#11-báo-cáo-reports)
+12. [Thông báo & Push Notification (Firebase)](#12-thông-báo--push-notification-firebase)
 
 > **Ký hiệu:** 🔒 = Cần Bearer Token | 🔓 = Không cần Token
 
@@ -890,6 +891,160 @@ Báo cáo một kỷ niệm hoặc bình luận vi phạm cộng đồng. Báo c
 ```
 
 > `target_type`: `1` = Kỷ niệm (Memory), `2` = Bình luận (Comment)
+
+---
+
+## 12. THÔNG BÁO & PUSH NOTIFICATION (FIREBASE)
+
+Waymark sử dụng **Firebase Cloud Messaging (FCM)** để gửi push notification tới thiết bị di động. Hệ thống hoạt động theo luồng sau:
+
+```
+User A like/comment/follow
+        ↓
+  API Server lưu Notification vào DB
+        ↓
+  Celery Worker gửi FCM qua Firebase Admin SDK
+        ↓
+  Thiết bị của User B nhận push notification
+```
+
+---
+
+### 12.1 Đăng ký nhận thông báo — Lưu Device Token
+
+> Đã có ở Section Auth: `POST /auth/device-token` 🔒
+
+Gọi API này **ngay sau khi đăng nhập** để đăng ký thiết bị nhận push notification.
+
+**Request Body (JSON):**
+```json
+{
+  "token": "fMtY8k3Ps0c:APA91bH...",
+  "platform": "android"
+}
+```
+
+| Field | Bắt buộc | Mô tả |
+|-------|----------|-------|
+| `token` | ✅ | FCM registration token lấy từ `FirebaseMessaging.getInstance().getToken()` |
+| `platform` | ❌ | `ios` / `android` / `web` |
+
+**Response 200:**
+```json
+{ "message": "Device token đã được lưu." }
+```
+
+> **Quan trọng:** Lắng nghe sự kiện `onTokenRefresh` của Firebase SDK và gọi lại API này khi token thay đổi để đảm bảo không mất thông báo.
+
+---
+
+### 12.2 Các loại thông báo (notification_type)
+
+| Giá trị | Loại | Khi nào kích hoạt | Tiêu đề FCM |
+|---------|------|-------------------|-------------|
+| `1` | Like | Ai đó thích kỷ niệm của bạn | "Lượt thích mới" |
+| `2` | Comment | Ai đó bình luận về kỷ niệm của bạn | "Bình luận mới" |
+| `3` | Follow | Ai đó theo dõi bạn | "Người theo dõi mới" |
+| `4` | Chat | Tin nhắn mới trong hội thoại | "Tin nhắn mới" |
+
+**Payload FCM nhận được trên thiết bị:**
+```json
+{
+  "notification": {
+    "title": "Lượt thích mới",
+    "body": "Dương Waymark đã thích kỷ niệm của bạn."
+  },
+  "data": {
+    "notification_type": "1",
+    "reference_id": "<uuid-của-memory>",
+    "sender_id": "<uuid-của-người-gửi>"
+  }
+}
+```
+
+> Dùng trường `data.notification_type` và `data.reference_id` để điều hướng người dùng đến đúng màn hình khi tap vào thông báo.
+
+---
+
+### 12.3 `GET /notifications` 🔒 — Lấy danh sách thông báo
+
+Trả về 50 thông báo gần nhất, kèm thông tin người gửi.
+
+**Response 200:**
+```json
+[
+  {
+    "id": "uuid",
+    "user_id": "uuid",
+    "sender_id": "uuid",
+    "sender_username": "duong123",
+    "sender_display_name": "Dương Waymark",
+    "sender_avatar_url": "https://pub-xxx.r2.dev/avatars/...",
+    "notification_type": 1,
+    "message": "Dương Waymark đã thích kỷ niệm của bạn.",
+    "reference_id": "uuid-của-memory",
+    "is_read": false,
+    "created_at": "2026-06-26T10:30:00Z"
+  }
+]
+```
+
+---
+
+### 12.4 `POST /notifications/{notification_id}/read` 🔒 — Đánh dấu đã đọc
+
+Đánh dấu một thông báo cụ thể là đã đọc.
+
+**Response 200:**
+```json
+{ "message": "Notification marked as read" }
+```
+
+---
+
+### 12.5 `POST /notifications/read-all` 🔒 — Đánh dấu tất cả đã đọc
+
+Đánh dấu toàn bộ thông báo chưa đọc của user là đã đọc.
+
+**Response 200:**
+```json
+{ "message": "All notifications marked as read" }
+```
+
+---
+
+### 12.6 Quy trình tích hợp FCM cho Mobile App
+
+**Bước 1 — Khởi tạo Firebase SDK** (chỉ làm một lần khi app khởi động):
+```dart
+// Flutter
+await Firebase.initializeApp();
+String? token = await FirebaseMessaging.instance.getToken();
+```
+
+**Bước 2 — Gửi token lên server** (sau mỗi lần đăng nhập):
+```dart
+await api.post('/v1/auth/device-token', {
+  'token': token,
+  'platform': 'android', // hoặc 'ios'
+});
+```
+
+**Bước 3 — Lắng nghe token refresh**:
+```dart
+FirebaseMessaging.instance.onTokenRefresh.listen((newToken) {
+  api.post('/v1/auth/device-token', {'token': newToken, 'platform': 'android'});
+});
+```
+
+**Bước 4 — Xử lý notification khi app foreground**:
+```dart
+FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+  final type = message.data['notification_type'];
+  final refId = message.data['reference_id'];
+  // Điều hướng theo type: 1=memory, 2=memory, 3=profile, 4=chat
+});
+```
 
 ---
 
