@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from datetime import timedelta, datetime
 import uuid
 import secrets
+import hashlib
 
 from .. import schemas, models
 from ..database import get_db
@@ -174,18 +175,19 @@ def forgot_password(body: schemas.ForgotPasswordRequest, db: Session = Depends(g
     ).delete(synchronize_session=False)
 
     reset_token = secrets.token_urlsafe(32)
+    # Hash token trước khi lưu DB — plaintext không bao giờ được lưu
+    hashed_token = hashlib.sha256(reset_token.encode()).hexdigest()
     expiry = datetime.utcnow() + timedelta(minutes=30)
     prt = models.PasswordResetToken(
         id=uuid.uuid4(),
         user_id=user.id,
-        token=reset_token,
+        token=hashed_token,
         expires_at=expiry
     )
     db.add(prt)
     db.commit()
 
-    # TODO: gửi email chứa reset_token
-    # Trả về token tạm thời để test (xoá trong production)
+    # TODO: gửi email chứa reset_token (link: /reset-password?token=<reset_token>)
     return {
         "message": "Token đặt lại mật khẩu đã được tạo.",
         "reset_token": reset_token,
@@ -199,8 +201,9 @@ def reset_password(body: schemas.ResetPasswordRequest, db: Session = Depends(get
     if len(body.new_password) < 6:
         raise HTTPException(status_code=400, detail="Mật khẩu mới phải có ít nhất 6 ký tự.")
 
+    hashed_input = hashlib.sha256(body.token.encode()).hexdigest()
     prt = db.query(models.PasswordResetToken).filter(
-        models.PasswordResetToken.token == body.token
+        models.PasswordResetToken.token == hashed_input
     ).first()
 
     if not prt:
@@ -255,13 +258,21 @@ def register_device_token(
 
 @router.post("/google", response_model=schemas.Token)
 def login_google(google_in: schemas.GoogleLoginRequest, db: Session = Depends(get_db)):
-    from jose import jwt
-    import requests
-    
+    import os
     token = google_in.credential
     try:
-        # get_unverified_claims avoids python-jose's at_hash check (requires access_token we don't have)
-        payload = jwt.get_unverified_claims(token)
+        google_client_id = os.getenv("GOOGLE_CLIENT_ID", "")
+        if google_client_id:
+            from google.oauth2 import id_token as google_id_token
+            from google.auth.transport import requests as google_requests
+            payload = google_id_token.verify_oauth2_token(
+                token, google_requests.Request(), google_client_id
+            )
+        else:
+            # Fallback khi chưa cấu hình GOOGLE_CLIENT_ID (dev only)
+            from jose import jwt as jose_jwt
+            payload = jose_jwt.get_unverified_claims(token)
+
         email = payload.get("email")
         name = payload.get("name")
         picture = payload.get("picture")
@@ -269,6 +280,8 @@ def login_google(google_in: schemas.GoogleLoginRequest, db: Session = Depends(ge
         if not email:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Google token does not contain email")
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid Google token: {str(e)}")
         

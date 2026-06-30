@@ -289,10 +289,9 @@ def delete_comment(
     
     if not is_comment_owner and not is_memory_owner and not is_admin and not has_delete_perm:
         raise HTTPException(status_code=403, detail="Not authorized to delete this comment")
-        
-    db.query(models.CommentLike).filter_by(comment_id=comment_id).delete()
-    db.query(models.Report).filter(models.Report.target_id == comment_id, models.Report.target_type == 2).delete()
-    db.delete(comment)
+
+    from datetime import datetime as _dt
+    comment.deleted_at = _dt.utcnow()
     db.commit()
     return
 
@@ -306,6 +305,10 @@ def follow_user(
 ):
     if current_user.id == follow_in.target_user_id:
         raise HTTPException(status_code=400, detail="Cannot follow yourself")
+
+    target_user = db.query(models.User).filter_by(id=follow_in.target_user_id).first()
+    if not target_user:
+        raise HTTPException(status_code=404, detail="Người dùng không tồn tại.")
         
     rel = db.query(models.UserRelationship).filter_by(
         source_user_id=current_user.id, 
@@ -519,106 +522,75 @@ def unblock_user(
 
     return
 
+def _build_simple_user_list(user_ids: list, db) -> list:
+    """Batch-load user info to avoid N+1 queries."""
+    from .media import get_r2_url
+    if not user_ids:
+        return []
+    users = {u.id: u for u in db.query(models.User).filter(models.User.id.in_(user_ids)).all()}
+    profiles = {p.user_id: p for p in db.query(models.UserProfile).filter(models.UserProfile.user_id.in_(user_ids)).all()}
+    avatar_ids = [p.avatar_media_id for p in profiles.values() if p and p.avatar_media_id]
+    avatars = {}
+    if avatar_ids:
+        for av in db.query(models.Media).filter(models.Media.id.in_(avatar_ids)).all():
+            avatars[av.id] = get_r2_url(av.file_url)
+    results = []
+    for uid in user_ids:
+        user = users.get(uid)
+        if not user:
+            continue
+        profile = profiles.get(uid)
+        results.append(schemas.SimpleUserResponse(
+            user_id=user.id,
+            username=user.username,
+            display_name=profile.display_name if profile else user.username,
+            avatar_url=avatars.get(profile.avatar_media_id) if profile and profile.avatar_media_id else None
+        ))
+    return results
+
+
 @router.get("/followers", response_model=List[schemas.SimpleUserResponse])
 def get_my_followers(
+    limit: int = 50,
+    offset: int = 0,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    # Find everyone who follows current_user (target_user_id = current_user.id, relation_type = 1)
     relations = db.query(models.UserRelationship).filter_by(
-        target_user_id=current_user.id,
-        relation_type=1 # follow
-    ).all()
-    
-    results = []
-    from .media import get_r2_url
-    for rel in relations:
-        user = db.query(models.User).filter_by(id=rel.source_user_id).first()
-        if user:
-            profile = db.query(models.UserProfile).filter_by(user_id=rel.source_user_id).first()
-            avatar_url = None
-            if profile and profile.avatar_media_id:
-                avatar_media = db.query(models.Media).filter_by(id=profile.avatar_media_id).first()
-                if avatar_media:
-                    avatar_url = get_r2_url(avatar_media.file_url)
-            
-            results.append(schemas.SimpleUserResponse(
-                user_id=user.id,
-                username=user.username,
-                display_name=profile.display_name if profile else user.username,
-                avatar_url=avatar_url
-            ))
-    return results
+        target_user_id=current_user.id, relation_type=1
+    ).offset(offset).limit(min(limit, 100)).all()
+    return _build_simple_user_list([r.source_user_id for r in relations], db)
 
 
 @router.get("/following", response_model=List[schemas.SimpleUserResponse])
 def get_my_following(
+    limit: int = 50,
+    offset: int = 0,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    # Find everyone current_user follows (source_user_id = current_user.id, relation_type = 1)
     relations = db.query(models.UserRelationship).filter_by(
-        source_user_id=current_user.id,
-        relation_type=1 # follow
-    ).all()
-    
-    results = []
-    from .media import get_r2_url
-    for rel in relations:
-        user = db.query(models.User).filter_by(id=rel.target_user_id).first()
-        if user:
-            profile = db.query(models.UserProfile).filter_by(user_id=rel.target_user_id).first()
-            avatar_url = None
-            if profile and profile.avatar_media_id:
-                avatar_media = db.query(models.Media).filter_by(id=profile.avatar_media_id).first()
-                if avatar_media:
-                    avatar_url = get_r2_url(avatar_media.file_url)
-            
-            results.append(schemas.SimpleUserResponse(
-                user_id=user.id,
-                username=user.username,
-                display_name=profile.display_name if profile else user.username,
-                avatar_url=avatar_url
-            ))
-    return results
+        source_user_id=current_user.id, relation_type=1
+    ).offset(offset).limit(min(limit, 100)).all()
+    return _build_simple_user_list([r.target_user_id for r in relations], db)
 
 
 @router.get("/friends", response_model=List[schemas.SimpleUserResponse])
 def get_my_friends(
+    limit: int = 50,
+    offset: int = 0,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    # Find mutual followers (friends)
     following_ids = db.query(models.UserRelationship.target_user_id).filter_by(
-        source_user_id=current_user.id,
-        relation_type=1
+        source_user_id=current_user.id, relation_type=1
     ).subquery()
-    
-    mutual_relations = db.query(models.UserRelationship).filter(
+    mutual = db.query(models.UserRelationship.source_user_id).filter(
         models.UserRelationship.target_user_id == current_user.id,
         models.UserRelationship.relation_type == 1,
         models.UserRelationship.source_user_id.in_(following_ids)
-    ).all()
-    
-    results = []
-    from .media import get_r2_url
-    for rel in mutual_relations:
-        user = db.query(models.User).filter_by(id=rel.source_user_id).first()
-        if user:
-            profile = db.query(models.UserProfile).filter_by(user_id=rel.source_user_id).first()
-            avatar_url = None
-            if profile and profile.avatar_media_id:
-                avatar_media = db.query(models.Media).filter_by(id=profile.avatar_media_id).first()
-                if avatar_media:
-                    avatar_url = get_r2_url(avatar_media.file_url)
-            
-            results.append(schemas.SimpleUserResponse(
-                user_id=user.id,
-                username=user.username,
-                display_name=profile.display_name if profile else user.username,
-                avatar_url=avatar_url
-            ))
-    return results
+    ).offset(offset).limit(min(limit, 100)).all()
+    return _build_simple_user_list([r[0] for r in mutual], db)
 
 
 @router.get("/memories/{memory_id}/likes", response_model=List[schemas.SimpleUserResponse])

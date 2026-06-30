@@ -9,6 +9,7 @@ from ..database import get_db
 from ..core.dependencies import get_current_user
 from ..worker import process_media, reverse_geocode
 from ..core.rate_limit import memory_limit
+from ..core.upload_validator import validate_image_upload
 
 router = APIRouter()
 
@@ -25,6 +26,10 @@ def create_memory(
     current_user: models.User = Depends(get_current_user),
     _rl: None = Depends(memory_limit)
 ):
+    # Validate privacy_level
+    if privacy_level not in (1, 2, 3):
+        raise HTTPException(status_code=400, detail="privacy_level phải là 1 (riêng tư), 2 (bạn bè), hoặc 3 (công khai).")
+
     # Validate and parse place_id
     parsed_place_id = None
     if place_id and place_id.strip() != "":
@@ -35,6 +40,11 @@ def create_memory(
                 status_code=400,
                 detail="Mã địa điểm (place_id) không hợp lệ. Vui lòng nhập đúng định dạng UUID (ví dụ: 3fa85f64-5717-4562-b3fc-2c963f66afa6) hoặc để trống."
             )
+
+    # Validate uploaded images
+    for image in images:
+        if image and image.filename:
+            validate_image_upload(image)
 
     # Convert lat/lng to PostGIS geography POINT
     wkt_point = f"SRID=4326;POINT({lng} {lat})"
@@ -187,7 +197,7 @@ def get_on_this_day_memories(
             extract('day', models.Memory.taken_at) == day
         )
         
-    memories = query.order_by(models.Memory.taken_at.desc()).all()
+    memories = query.order_by(models.Memory.taken_at.desc()).limit(50).all()
     
     results = []
     from .media import get_r2_url
