@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 import uuid
 from typing import List, Optional
 
@@ -205,36 +206,43 @@ def get_memory_comments(
         models.Comment.created_at.asc()
     ).all()
     
+    # Batch-load all media needed (avatar + comment images) to avoid N+1
+    from .media import get_r2_url
+    all_media_ids = list({av for _, _, _, av in comments if av} |
+                         {c.media_id for c, _, _, _ in comments if c.media_id})
+    media_url_map = {}
+    if all_media_ids:
+        for m in db.query(models.Media).filter(models.Media.id.in_(all_media_ids)).all():
+            media_url_map[m.id] = get_r2_url(m.file_url)
+
+    # Batch-load comment likes counts and is_liked set
+    comment_ids = [c.id for c, _, _, _ in comments]
+    likes_count_map = {}
+    liked_set = set()
+    if comment_ids:
+        likes_count_map = dict(
+            db.query(models.CommentLike.comment_id, func.count())
+            .filter(models.CommentLike.comment_id.in_(comment_ids))
+            .group_by(models.CommentLike.comment_id).all()
+        )
+        liked_rows = db.query(models.CommentLike.comment_id).filter(
+            models.CommentLike.comment_id.in_(comment_ids),
+            models.CommentLike.user_id == current_user.id
+        ).all()
+        liked_set = {row[0] for row in liked_rows}
+
     results = []
     for comment, username, display_name, avatar_media_id in comments:
-        avatar_url = None
-        if avatar_media_id:
-            avatar_media = db.query(models.Media).filter_by(id=avatar_media_id).first()
-            if avatar_media:
-                from .media import get_r2_url
-                avatar_url = get_r2_url(avatar_media.file_url)
-                
-        comment_media_url = None
-        if comment.media_id:
-            comment_media = db.query(models.Media).filter_by(id=comment.media_id).first()
-            if comment_media:
-                from .media import get_r2_url
-                comment_media_url = get_r2_url(comment_media.file_url)
-
-        # Count comment likes and check if liked by current user
-        likes_count = db.query(models.CommentLike).filter_by(comment_id=comment.id).count()
-        is_liked = db.query(models.CommentLike).filter_by(comment_id=comment.id, user_id=current_user.id).first() is not None
-
         r = schemas.CommentResponse.model_validate(comment)
         r.username = username
         r.display_name = display_name or username
-        r.avatar_url = avatar_url
+        r.avatar_url = media_url_map.get(avatar_media_id) if avatar_media_id else None
         r.parent_comment_id = comment.parent_comment_id
-        r.media_url = comment_media_url
-        r.likes_count = likes_count
-        r.is_liked = is_liked
+        r.media_url = media_url_map.get(comment.media_id) if comment.media_id else None
+        r.likes_count = likes_count_map.get(comment.id, 0)
+        r.is_liked = comment.id in liked_set
         results.append(r)
-        
+
     return results
 
 @router.post("/comments/{comment_id}/likes", status_code=status.HTTP_201_CREATED)
@@ -398,21 +406,32 @@ def get_notifications(
         if anchor:
             query = query.filter(models.Notification.created_at < anchor.created_at)
     notifications = query.order_by(models.Notification.created_at.desc()).limit(min(limit, 50)).all()
-    
+
+    # Batch-load senders to avoid N+1
+    sender_ids = list({n.sender_id for n in notifications if n.sender_id})
+    users_map = {}
+    profiles_map = {}
+    avatars_map = {}
+    if sender_ids:
+        from .media import get_r2_url
+        users_map = {u.id: u for u in db.query(models.User).filter(models.User.id.in_(sender_ids)).all()}
+        profiles_map = {p.user_id: p for p in db.query(models.UserProfile).filter(models.UserProfile.user_id.in_(sender_ids)).all()}
+        avatar_ids = [p.avatar_media_id for p in profiles_map.values() if p and p.avatar_media_id]
+        if avatar_ids:
+            for av in db.query(models.Media).filter(models.Media.id.in_(avatar_ids)).all():
+                avatars_map[av.id] = get_r2_url(av.file_url)
+
     results = []
     for n in notifications:
         res = schemas.NotificationResponse.model_validate(n)
         if n.sender_id:
-            sender = db.query(models.User).filter_by(id=n.sender_id).first()
-            profile = db.query(models.UserProfile).filter_by(user_id=n.sender_id).first()
+            sender = users_map.get(n.sender_id)
+            profile = profiles_map.get(n.sender_id)
             if sender:
                 res.sender_username = sender.username
                 res.sender_display_name = profile.display_name if profile else sender.username
                 if profile and profile.avatar_media_id:
-                    avatar_media = db.query(models.Media).filter_by(id=profile.avatar_media_id).first()
-                    if avatar_media:
-                        from .media import get_r2_url
-                        res.sender_avatar_url = get_r2_url(avatar_media.file_url)
+                    res.sender_avatar_url = avatars_map.get(profile.avatar_media_id)
         results.append(res)
     return results
 
@@ -600,23 +619,4 @@ def get_memory_likes(
     current_user: models.User = Depends(get_current_user)
 ):
     likes = db.query(models.Like).filter_by(memory_id=memory_id).all()
-    
-    results = []
-    from .media import get_r2_url
-    for l in likes:
-        user = db.query(models.User).filter_by(id=l.user_id).first()
-        if user:
-            profile = db.query(models.UserProfile).filter_by(user_id=l.user_id).first()
-            avatar_url = None
-            if profile and profile.avatar_media_id:
-                avatar_media = db.query(models.Media).filter_by(id=profile.avatar_media_id).first()
-                if avatar_media:
-                    avatar_url = get_r2_url(avatar_media.file_url)
-            
-            results.append(schemas.SimpleUserResponse(
-                user_id=user.id,
-                username=user.username,
-                display_name=profile.display_name if profile else user.username,
-                avatar_url=avatar_url
-            ))
-    return results
+    return _build_simple_user_list([l.user_id for l in likes], db)

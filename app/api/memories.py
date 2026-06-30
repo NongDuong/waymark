@@ -30,6 +30,11 @@ def create_memory(
     if privacy_level not in (1, 2, 3):
         raise HTTPException(status_code=400, detail="privacy_level phải là 1 (riêng tư), 2 (bạn bè), hoặc 3 (công khai).")
 
+    # Validate image count
+    real_images = [img for img in images if img and img.filename]
+    if len(real_images) > 10:
+        raise HTTPException(status_code=400, detail="Tối đa 10 ảnh mỗi kỷ niệm.")
+
     # Validate and parse place_id
     parsed_place_id = None
     if place_id and place_id.strip() != "":

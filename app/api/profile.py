@@ -309,37 +309,9 @@ def get_user_memories(
             )
         
     memories_data = query.order_by(models.Memory.taken_at.desc()).offset(skip).limit(limit).all()
-    
-    from .media import get_r2_url
-    from .memories import populate_author_info
-    results = []
-    for memory, lat, lng in memories_data:
-        likes_count = db.query(func.count(models.Like.memory_id)).filter(models.Like.memory_id == memory.id).scalar() or 0
-        comments_count = db.query(func.count(models.Comment.id)).filter(models.Comment.memory_id == memory.id).scalar() or 0
-        is_liked = db.query(models.Like).filter(
-            models.Like.memory_id == memory.id,
-            models.Like.user_id == current_user.id
-        ).first() is not None
 
-        res = schemas.MemoryResponse.model_validate(memory)
-        res.location = {"lat": lat, "lng": lng}
-        res.likes_count = likes_count
-        res.comments_count = comments_count
-        res.is_liked = is_liked
-        
-        # Populate media (images/videos)
-        media_records = db.query(models.Media).filter(models.Media.memory_id == memory.id).all()
-        res.media = []
-        for m in media_records:
-            m_schema = schemas.MediaResponse.model_validate(m)
-            m_schema.file_url = get_r2_url(m.file_url)
-            res.media.append(m_schema)
-        
-        # Populate author info (username, display_name, avatar_url)
-        populate_author_info(res, db)
-        results.append(res)
-        
-    return results
+    from .map import _batch_enrich_memories
+    return _batch_enrich_memories(memories_data, db, current_user_id=current_user.id)
 
 @router.get("/me/location-stats", response_model=schemas.UserLocationStats)
 def get_my_location_stats(

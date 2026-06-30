@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, List, Any
 from datetime import datetime
 from uuid import UUID
@@ -14,9 +14,9 @@ class RefreshTokenRequest(BaseModel):
 
 class UserCreate(BaseModel):
     email: EmailStr
-    username: str
-    password: str
-    display_name: Optional[str] = None
+    username: str = Field(min_length=3, max_length=30)
+    password: str = Field(min_length=6, max_length=128)
+    display_name: Optional[str] = Field(None, max_length=50)
 
 class GoogleLoginRequest(BaseModel):
     credential: str
@@ -49,15 +49,15 @@ class LocationInput(BaseModel):
     lng: float
 
 class MemoryCreate(BaseModel):
-    caption: str
+    caption: str = Field(min_length=1, max_length=2000)
     location: LocationInput
-    mood_code: Optional[str] = None
-    privacy_level: int = 3 # 1=private, 2=friends, 3=public
+    mood_code: Optional[str] = Field(None, max_length=50)
+    privacy_level: int = 3
     place_id: Optional[UUID] = None
 
 class MemoryUpdate(BaseModel):
-    caption: Optional[str] = None
-    mood_code: Optional[str] = None
+    caption: Optional[str] = Field(None, min_length=1, max_length=2000)
+    mood_code: Optional[str] = Field(None, max_length=50)
     privacy_level: Optional[int] = None
 
 class MemoryResponse(BaseModel):

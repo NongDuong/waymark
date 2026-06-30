@@ -26,39 +26,20 @@ def get_trending_nearby(
     # For MVP, just getting recent ones within radius.
     
     center_point = f"SRID=4326;POINT({lng} {lat})"
-    
-    query = db.query(models.Memory).filter(
+
+    memories_data = db.query(
+        models.Memory,
+        func.ST_Y(models.Memory.location.cast(models.Geometry)).label('lat'),
+        func.ST_X(models.Memory.location.cast(models.Geometry)).label('lng')
+    ).filter(
         func.ST_DWithin(models.Memory.location.cast(Geography), center_point, radius),
-        models.Memory.privacy_level == 3, # Public
-        models.Memory.visibility_expires_at >= datetime.utcnow()
-    ).order_by(models.Memory.posted_at.desc()).limit(20)
-    
-    trending_memories = query.all()
-    results = []
-    for m in trending_memories:
-        coords = db.query(
-            func.ST_Y(models.Memory.location).label('lat'),
-            func.ST_X(models.Memory.location).label('lng')
-        ).filter(models.Memory.id == m.id).first()
-        
-        likes_c = db.query(func.count(models.Like.memory_id)).filter(models.Like.memory_id == m.id).scalar() or 0
-        comments_c = db.query(func.count(models.Comment.id)).filter(models.Comment.memory_id == m.id).scalar() or 0
-        liked_by_me = db.query(models.Like).filter(
-            models.Like.memory_id == m.id,
-            models.Like.user_id == current_user.id
-        ).first() is not None
-        
-        m_res = schemas.MemoryResponse.model_validate(m)
-        m_res.likes_count = likes_c
-        m_res.comments_count = comments_c
-        m_res.is_liked = liked_by_me
-        if coords:
-            m_res.location = {"lat": coords.lat, "lng": coords.lng}
-            
-        from .memories import populate_author_info
-        populate_author_info(m_res, db)
-        results.append(m_res)
-    return results
+        models.Memory.privacy_level == 3,
+        models.Memory.visibility_expires_at >= datetime.utcnow(),
+        models.Memory.deleted_at.is_(None)
+    ).order_by(models.Memory.posted_at.desc()).limit(20).all()
+
+    from .map import _batch_enrich_memories
+    return _batch_enrich_memories(memories_data, db, current_user_id=current_user.id)
 
 @router.get("/clusters", response_model=List[schemas.ClusterResponse])
 def get_map_clusters(
