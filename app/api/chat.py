@@ -5,7 +5,7 @@ import json
 import os
 import logging
 import asyncio
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 import redis.asyncio as aioredis
 
@@ -309,8 +309,8 @@ async def create_conversation(
 @router.get("/{conversation_id}/messages", response_model=List[schemas.MessageResponse])
 async def get_messages(
     conversation_id: uuid.UUID,
-    limit: int = 50,
-    skip: int = 0,
+    limit: int = 30,
+    before_id: Optional[uuid.UUID] = None,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
@@ -319,13 +319,16 @@ async def get_messages(
         conversation_id=conversation_id,
         user_id=current_user.id
     ).first()
-    
+
     if not participant:
         raise HTTPException(status_code=403, detail="Not a participant of this conversation")
-        
-    messages = db.query(models.Message).filter_by(
-        conversation_id=conversation_id
-    ).order_by(models.Message.sent_at.desc()).offset(skip).limit(limit).all()
+
+    query = db.query(models.Message).filter(models.Message.conversation_id == conversation_id)
+    if before_id:
+        anchor = db.query(models.Message).filter_by(id=before_id).first()
+        if anchor:
+            query = query.filter(models.Message.sent_at < anchor.sent_at)
+    messages = query.order_by(models.Message.sent_at.desc()).limit(min(limit, 100)).all()
     
     results = []
     from .media import get_r2_url

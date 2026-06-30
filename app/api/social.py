@@ -380,10 +380,17 @@ def unfollow_user(
 
 @router.get("/notifications", response_model=List[schemas.NotificationResponse])
 def get_notifications(
+    limit: int = 20,
+    before_id: Optional[uuid.UUID] = None,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    notifications = db.query(models.Notification).filter_by(user_id=current_user.id).order_by(models.Notification.created_at.desc()).limit(50).all()
+    query = db.query(models.Notification).filter(models.Notification.user_id == current_user.id)
+    if before_id:
+        anchor = db.query(models.Notification).filter_by(id=before_id).first()
+        if anchor:
+            query = query.filter(models.Notification.created_at < anchor.created_at)
+    notifications = query.order_by(models.Notification.created_at.desc()).limit(min(limit, 50)).all()
     
     results = []
     for n in notifications:
