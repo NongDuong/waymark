@@ -1,7 +1,8 @@
 # WAYMARK API - TÀI LIỆU TÍCH HỢP CHI TIẾT
 
 > **Base URL:** `https://<your-domain>/v1`  
-> **Auth:** Tất cả API có 🔒 yêu cầu Header: `Authorization: Bearer <access_token>`
+> **Auth:** Tất cả API có 🔒 yêu cầu Header: `Authorization: Bearer <access_token>`  
+> **Rate Limiting:** Hệ thống giới hạn số lượng request để chống spam. Vượt quá giới hạn sẽ nhận mã lỗi `429 Too Many Requests`.
 
 ---
 
@@ -1094,6 +1095,30 @@ await api.post('/v1/auth/logout', {
 
 ---
 
+## PHỤ LỤC: RATE LIMITING (CHỐNG SPAM)
+
+Hệ thống giới hạn request dựa trên **IP** (auth) hoặc **User ID** (social/chat/content).
+
+| Endpoint | Giới hạn | Theo |
+|----------|---------|------|
+| `POST /auth/signup/email` | 5 lần / giờ | IP |
+| `POST /auth/login/password` | 10 lần / phút | IP |
+| `POST /auth/forgot-password` | 3 lần / giờ | IP |
+| `POST /memories/{id}/likes` | 200 lần / giờ | User |
+| `POST /memories/{id}/comments` | 30 lần / giờ | User |
+| `POST /users/follow` | 50 lần / giờ | User |
+| `POST /conversations/{id}/messages` | 30 lần / phút | User |
+| `POST /memories` | 20 lần / 24 giờ | User |
+
+**Khi vượt giới hạn — Response `429`:**
+```json
+{
+  "detail": "Quá nhiều yêu cầu. Vui lòng thử lại sau 60 giây."
+}
+```
+
+---
+
 ## PHỤ LỤC: MÃ TRẠNG THÁI HTTP
 
 | Mã | Ý nghĩa |
@@ -1105,6 +1130,7 @@ await api.post('/v1/auth/logout', {
 | 401 | Chưa đăng nhập hoặc Token hết hạn |
 | 403 | Không có quyền truy cập |
 | 404 | Không tìm thấy tài nguyên |
+| 429 | Quá nhiều yêu cầu (Rate Limit) |
 | 500 | Lỗi phía Server |
 
 ## PHỤ LỤC: MÃ QUYỀN RIÊNG TƯ KỶ NIỆM
