@@ -109,6 +109,59 @@
 - **Database Migration**:
   - Migration `h7i8j9k0l1m2`: tạo bảng `device_tokens` (lưu FCM tokens) và `password_reset_tokens` (lưu token quên MK) với index phù hợp.
 
+## 2026-06-29
+- **Section 12 tài liệu FCM Push Notification** (`api_documentation.md`):
+  - Viết toàn bộ Section 12 hướng dẫn tích hợp Firebase: đăng ký device token, bảng loại thông báo, phân trang, Flutter integration guide.
+- **API Đăng xuất** (`app/api/auth.py`):
+  - Thêm `POST /v1/auth/logout` (🔒): nhận `device_token`, xóa khỏi DB. Thiết bị đó ngừng nhận push notification sau khi logout.
+- **Sửa lỗi Google OAuth 400** (`app/api/auth.py`):
+  - python-jose ném lỗi khi ID Token chứa `at_hash` claim nhưng không có access_token đi kèm.
+  - Fix: dùng `google.oauth2.id_token.verify_oauth2_token()` khi có `GOOGLE_CLIENT_ID` (xác minh chữ ký thật). Fallback sang `jwt.get_unverified_claims()` cho môi trường dev không có client ID.
+
+## 2026-06-30
+- **Backup dữ liệu lên Cloudflare R2** (`scripts/backup_r2.sh`, `scripts/restore_r2.sh`, `scripts/README.md`):
+  - Script tự động: `pg_dump | gzip` → upload lên R2 bucket `waymark-media/backups/`.
+  - Script restore: liệt kê backup có sẵn trên R2, tải về, restore (`DROP SCHEMA + CREATE SCHEMA + pg_restore`).
+  - Hướng dẫn cài cron hàng ngày, quy trình chuyển server giữ nguyên dữ liệu, bảng lệnh nguy hiểm cần tránh.
+- **Phân trang cursor-based** (`app/api/social.py`, `app/api/chat.py`):
+  - Thông báo (`GET /notifications`): tham số `before_id` + `limit` (tối đa 50) thay vì OFFSET.
+  - Tin nhắn (`GET /conversations/{id}/messages`): tham số `before_id` + `limit` (mặc định 30, tối đa 100) thay vì `skip`.
+  - Cursor-based tránh data drift khi có real-time data mới.
+- **Anti-spam — Rate Limiting** (`app/core/rate_limit.py`, `app/main.py`, `requirements.txt`):
+  - Cài `fastapi-limiter==0.1.6` dùng Redis DB 1 (DB 0 là Celery).
+  - IP-based: signup 5/giờ, login 10/phút, forgot-password 3/giờ.
+  - User-based: like 200/giờ, comment 30/giờ, follow 50/giờ, message 30/phút, tạo memory 20/24 giờ.
+  - Callback 429 trả lỗi tiếng Việt, dùng `X-Forwarded-For` cho real IP qua nginx.
+- **Tối ưu N+1 queries — Batch Loading** (`app/api/map.py`, `app/api/social.py`, `app/api/profile.py`, `app/api/discovery.py`):
+  - Viết hàm `_batch_enrich_memories()` trong `map.py`: load likes counts, comments counts, is_liked, media, author info bằng ~6 queries thay vì 5×N queries cũ.
+  - `GET /map/pins`: dùng `_batch_enrich_memories()`.
+  - `GET /users/{id}/memories` (`profile.py`): dùng `_batch_enrich_memories()`.
+  - `GET /discovery/trending/nearby` (`discovery.py`): dùng `_batch_enrich_memories()`.
+  - `GET /memories/{id}/comments` (`social.py`): batch load avatars + comment media + comment likes counts + liked_set — giảm từ 3N → 3 queries.
+  - `GET /notifications` (`social.py`): batch load sender info (user + profile + avatar) — giảm từ 3N → 4 queries.
+  - `GET /memories/{id}/likes` (`social.py`): dùng `_build_simple_user_list()` — giảm từ 3N → 3 queries.
+  - Block check trong `map.py`: thay Python loop bằng SQL UNION subquery.
+- **Bảo mật** (`app/core/security.py`, `app/api/auth.py`):
+  - `SECRET_KEY`: in warning khi dùng default key lúc khởi động.
+  - Password reset token: lưu SHA-256 hash vào DB thay vì plaintext.
+  - `GET /followers`, `GET /following`, `GET /friends` (`social.py`): thêm kiểm tra target user tồn tại trước khi follow; thêm pagination `limit`/`offset`.
+- **Validation & Upload** (`app/core/upload_validator.py`, `app/api/memories.py`, `app/schemas.py`):
+  - Tạo `app/core/upload_validator.py`: kiểm tra content-type (JPEG/PNG/WebP/GIF/HEIC) và kích thước (≤50MB).
+  - `POST /memories`: validate `privacy_level` phải là 1/2/3; giới hạn tối đa 10 ảnh/kỷ niệm; áp dụng upload validator cho từng ảnh.
+  - `app/schemas.py`: thêm `Field` constraints — username 3–30 ký tự, password 6–128 ký tự, caption 1–2000 ký tự, display_name ≤50 ký tự.
+- **Soft Delete bình luận** (`app/api/social.py`):
+  - `DELETE /comments/{id}`: đổi từ hard delete sang soft delete (`deleted_at = utcnow()`). Comment bị ẩn khỏi API nhưng giữ trong DB.
+- **Sửa bug** (`app/api/map.py`, `app/api/discovery.py`):
+  - `map.py` dòng 79: `m_res.author_username` → `m_res.username` (field không tồn tại trong schema, gây mất data silently).
+  - `discovery.py`: thiếu filter `deleted_at.is_(None)` → kỷ niệm đã xóa vẫn hiện trong trending.
+- **Cập nhật tài liệu** (`api_documentation.md`):
+  - Thêm bảng Rate Limiting và mã lỗi 429.
+  - Cập nhật `POST /memories`: validation `privacy_level`, giới hạn ảnh, caption 1–2000 ký tự.
+  - Cập nhật `DELETE /comments/{id}`: ghi rõ soft delete.
+  - Cập nhật `GET /followers/following/friends`: thêm `limit`/`offset` params.
+  - Thêm note bảo mật cho `POST /auth/google` (verify chữ ký) và `POST /auth/forgot-password` (SHA-256 hash).
+  - Thêm bảng validation rules cho `POST /auth/signup/email`.
+
 ## 2026-05-27
 - **Sửa lỗi trùng lặp cuộc hội thoại (Conversation Deduplication)**:
   - Nâng cấp API tạo cuộc hội thoại (`POST /v1/chat`). Đối với cuộc hội thoại trực tiếp (direct message 1-1), hệ thống tiến hành kiểm tra sự tồn tại trong DB.
