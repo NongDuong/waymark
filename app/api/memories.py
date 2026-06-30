@@ -8,6 +8,7 @@ from .. import schemas, models
 from ..database import get_db
 from ..core.dependencies import get_current_user
 from ..worker import process_media, reverse_geocode
+from ..core.rate_limit import memory_limit
 
 router = APIRouter()
 
@@ -21,7 +22,8 @@ def create_memory(
     place_id: Optional[str] = Form(None),
     images: List[UploadFile] = File(default=[]),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(get_current_user),
+    _rl: None = Depends(memory_limit)
 ):
     # Validate and parse place_id
     parsed_place_id = None

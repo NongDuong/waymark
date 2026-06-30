@@ -12,6 +12,7 @@ import redis.asyncio as aioredis
 from .. import schemas, models
 from ..database import get_db, SessionLocal
 from ..core.dependencies import get_current_user
+from ..core.rate_limit import message_limit
 
 logger = logging.getLogger(__name__)
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379")
@@ -347,7 +348,8 @@ async def send_message(
     conversation_id: uuid.UUID,
     msg_in: schemas.MessageCreate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(get_current_user),
+    _rl: None = Depends(message_limit)
 ):
     # Verify participation
     participant = db.query(models.ConversationParticipant).filter_by(

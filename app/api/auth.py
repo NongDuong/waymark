@@ -8,11 +8,12 @@ from .. import schemas, models
 from ..database import get_db
 from ..core import security
 from ..core.dependencies import get_current_user
+from ..core.rate_limit import signup_limit, login_limit, forgot_pwd_limit
 
 router = APIRouter()
 
 @router.post("/signup/email", response_model=schemas.UserResponse)
-def signup(user_in: schemas.UserCreate, db: Session = Depends(get_db)):
+def signup(user_in: schemas.UserCreate, db: Session = Depends(get_db), _rl: None = Depends(signup_limit)):
     # Check email duplicate
     email_exists = db.query(models.User).filter(
         models.User.primary_email == user_in.email
@@ -66,7 +67,7 @@ def signup(user_in: schemas.UserCreate, db: Session = Depends(get_db)):
     return new_user
 
 @router.post("/login/password", response_model=schemas.Token)
-def login(login_in: schemas.LoginRequest, db: Session = Depends(get_db)):
+def login(login_in: schemas.LoginRequest, db: Session = Depends(get_db), _rl: None = Depends(login_limit)):
     # login_in.username can be username or email
     user = db.query(models.User).filter(
         (models.User.username == login_in.username) | 
@@ -159,7 +160,7 @@ def change_password(
 
 
 @router.post("/forgot-password", status_code=200)
-def forgot_password(body: schemas.ForgotPasswordRequest, db: Session = Depends(get_db)):
+def forgot_password(body: schemas.ForgotPasswordRequest, db: Session = Depends(get_db), _rl: None = Depends(forgot_pwd_limit)):
     """Yêu cầu đặt lại mật khẩu. Trả về token reset (tích hợp email sau)."""
     user = db.query(models.User).filter(models.User.primary_email == body.email).first()
     if not user:

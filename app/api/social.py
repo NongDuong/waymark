@@ -7,6 +7,7 @@ from .. import schemas, models
 from ..database import get_db
 from ..core.dependencies import get_current_user
 from ..worker import send_notification
+from ..core.rate_limit import like_limit, comment_limit, follow_limit
 
 router = APIRouter()
 
@@ -14,7 +15,8 @@ router = APIRouter()
 def like_memory(
     memory_id: uuid.UUID,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(get_current_user),
+    _rl: None = Depends(like_limit)
 ):
     like = db.query(models.Like).filter_by(memory_id=memory_id, user_id=current_user.id).first()
     if like:
@@ -58,7 +60,8 @@ def add_comment(
     parent_comment_id: Optional[str] = Form(None),
     image: UploadFile = File(None),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(get_current_user),
+    _rl: None = Depends(comment_limit)
 ):
     if not content and not image:
         raise HTTPException(status_code=400, detail="Vui lòng nhập nội dung hoặc gửi ảnh.")
@@ -298,7 +301,8 @@ def delete_comment(
 def follow_user(
     follow_in: schemas.FollowCreate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(get_current_user),
+    _rl: None = Depends(follow_limit)
 ):
     if current_user.id == follow_in.target_user_id:
         raise HTTPException(status_code=400, detail="Cannot follow yourself")

@@ -2,6 +2,8 @@ from fastapi import FastAPI, Depends, Request
 from sqlalchemy.orm import Session
 from .database import engine, Base, get_db
 from . import models
+import redis.asyncio as aioredis
+from fastapi_limiter import FastAPILimiter
 
 from .api import auth, memories, map, social, places, discovery, media, profile, chat, collections, reports, admin
 
@@ -30,6 +32,11 @@ app.include_router(admin.router, prefix="/v1/admin", tags=["admin"])
 @app.on_event("startup")
 async def startup_event():
     await chat.manager.init_redis()
+    redis = aioredis.from_url(
+        os.getenv("REDIS_URL", "redis://redis:6379/0").replace("/0", "/1"),
+        encoding="utf-8", decode_responses=True
+    )
+    await FastAPILimiter.init(redis)
 
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
