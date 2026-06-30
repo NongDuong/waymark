@@ -76,7 +76,7 @@ def _batch_enrich_memories(memories_data, db, current_user_id=None):
 
         author = users_map.get(m.user_id)
         if author:
-            m_res.author_username = author.username
+            m_res.username = author.username
             profile = profiles_map.get(author.id)
             if profile:
                 m_res.display_name = profile.display_name or author.username

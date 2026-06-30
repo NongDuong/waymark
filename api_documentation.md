@@ -79,7 +79,8 @@ Gửi `credential` (ID Token) nhận được từ Google Sign-In SDK trên App.
 ```
 **Response 200:** Trả về JWT token tương tự login thông thường (bao gồm `access_token`, `refresh_token`, `token_type`, `user_id`).
 
-> **Lưu ý:** Nếu email chưa tồn tại, hệ thống sẽ tự động tạo tài khoản mới và hồ sơ cá nhân kèm ảnh avatar từ Google.
+> **Lưu ý:** Nếu email chưa tồn tại, hệ thống sẽ tự động tạo tài khoản mới và hồ sơ cá nhân kèm ảnh avatar từ Google.  
+> **Bảo mật:** Khi biến môi trường `GOOGLE_CLIENT_ID` được cấu hình, server tự động xác minh chữ ký ID Token với Google. Nếu không cấu hình, token được decode mà không verify (chỉ dùng cho môi trường phát triển).
 
 ---
 
@@ -213,7 +214,8 @@ Tạo token đặt lại mật khẩu cho email đã đăng ký. Hiện tại to
 ```
 
 > **Lưu ý:** Nếu email không tồn tại, response vẫn trả về `200` với thông báo chung — để tránh tiết lộ email nào đã đăng ký.  
-> Token có hiệu lực **30 phút** và chỉ dùng được **một lần**.
+> Token có hiệu lực **30 phút** và chỉ dùng được **một lần**.  
+> **Bảo mật:** Token được lưu dưới dạng hash SHA-256 trong DB, không lưu plaintext — an toàn ngay cả khi DB bị lộ.
 
 ---
 
@@ -422,10 +424,16 @@ Dùng `multipart/form-data` vì có thể kèm theo ảnh.
 | `caption` | string | Nội dung kỷ niệm (bắt buộc) |
 | `lat` | float | Vĩ độ (bắt buộc) |
 | `lng` | float | Kinh độ (bắt buộc) |
-| `privacy_level` | int | 1=Riêng tư, 2=Bạn bè, 3=Công khai (mặc định 3) |
+| `privacy_level` | int | **1**=Riêng tư, **2**=Bạn bè, **3**=Công khai (mặc định 3). Chỉ chấp nhận 1, 2, hoặc 3 — giá trị khác trả về 400. |
 | `mood_code` | string | Trạng thái cảm xúc (tùy chọn) |
 | `place_id` | UUID | ID địa điểm từ hệ thống Places (tùy chọn) |
-| `images` | File[] | Danh sách ảnh đính kèm (tùy chọn) |
+| `images` | File[] | Danh sách ảnh đính kèm (tùy chọn). Xem giới hạn bên dưới. |
+
+**Giới hạn ảnh đính kèm:**
+- **Định dạng hỗ trợ:** JPEG, JPG, PNG, WebP, GIF, HEIC, HEIF
+- **Kích thước tối đa mỗi file:** 50MB
+- Upload file sai định dạng → `400 Loại file không hỗ trợ`
+- Upload file quá lớn → `413 File quá lớn`
 
 > Sau khi tạo, hệ thống tự động kích hoạt 2 tác vụ nền: **xử lý media** và **reverse geocoding** (tự động điền tên tỉnh/thành, quận/huyện).
 
@@ -540,7 +548,7 @@ Khi người dùng zoom out bản đồ, gộp nhiều ghim gần nhau thành m�
 |--------|----------|-------|
 | `POST` | `/memories/{memory_id}/comments` 🔒 | Đăng bình luận (text hoặc ảnh, hỗ trợ reply). |
 | `GET` | `/memories/{memory_id}/comments` 🔒 | Lấy tất cả bình luận (kèm avatar, likes). |
-| `DELETE` | `/comments/{comment_id}` 🔒 | Xóa bình luận (chủ bình luận hoặc chủ bài đăng). |
+| `DELETE` | `/comments/{comment_id}` 🔒 | Xóa bình luận (chủ bình luận hoặc chủ bài đăng). Áp dụng **soft delete** — bình luận bị ẩn, không xóa vật lý khỏi DB. |
 | `POST` | `/comments/{comment_id}/likes` 🔒 | Thích bình luận. |
 | `DELETE` | `/comments/{comment_id}/likes` 🔒 | Bỏ thích bình luận. |
 
@@ -558,14 +566,20 @@ Khi người dùng zoom out bản đồ, gộp nhiều ghim gần nhau thành m�
 |--------|----------|-------|
 | `POST` | `/users/follow` 🔒 | Follow người dùng. Tự động tăng bộ đếm followers/following. |
 | `DELETE` | `/users/{user_id}/follow` 🔒 | Unfollow. Tự động giảm bộ đếm. |
-| `GET` | `/followers` 🔒 | Danh sách người đang theo dõi mình. |
-| `GET` | `/following` 🔒 | Danh sách người mình đang theo dõi. |
-| `GET` | `/friends` 🔒 | Danh sách bạn bè (follow chéo lẫn nhau). |
+| `GET` | `/followers` 🔒 | Danh sách người đang theo dõi mình (có phân trang). |
+| `GET` | `/following` 🔒 | Danh sách người mình đang theo dõi (có phân trang). |
+| `GET` | `/friends` 🔒 | Danh sách bạn bè (follow chéo lẫn nhau, có phân trang). |
 
 **Body cho Follow:**
 ```json
 { "target_user_id": "uuid-của-người-muốn-follow" }
 ```
+
+**Query Parameters cho GET /followers, /following, /friends:**
+| Param | Type | Mặc định | Mô tả |
+|-------|------|---------|-------|
+| `limit` | int | 50 | Số lượng trả về (tối đa 100) |
+| `offset` | int | 0 | Bỏ qua N bản ghi đầu (phân trang offset) |
 
 ---
 
