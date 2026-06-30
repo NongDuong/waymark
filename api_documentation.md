@@ -754,8 +754,8 @@ Trả về danh sách tin nhắn trong cuộc hội thoại, **mới nhất trư
 **Query Parameters:**
 | Param | Type | Mặc định | Mô tả |
 |-------|------|---------|-------|
-| `skip` | int | 0 | Bỏ qua N tin nhắn đầu (dùng cho phân trang "load more") |
-| `limit` | int | 50 | Số lượng tin nhắn trả về tối đa |
+| `limit` | int | 30 | Số lượng tin nhắn trả về (tối đa 100) |
+| `before_id` | uuid | - | Lấy tin nhắn cũ hơn tin nhắn có ID này (cursor-based pagination) |
 
 **Response 200:**
 ```json
@@ -790,7 +790,11 @@ Trả về danh sách tin nhắn trong cuộc hội thoại, **mới nhất trư
 |----|---------|
 | 403 | `Not a participant of this conversation` — User không phải thành viên |
 
-> **Phân trang:** App tải trang đầu với `skip=0&limit=50`. Khi user cuộn lên, tải trang tiếp `skip=50&limit=50`, v.v.
+> **Phân trang (cursor-based):**
+> - Lần đầu mở hội thoại: `GET /messages?limit=30` → nhận 30 tin mới nhất
+> - Khi user scroll lên muốn load thêm: lấy `id` của tin nhắn **cũ nhất** trong danh sách hiện tại làm `before_id`
+> - `GET /messages?limit=30&before_id=<id-tin-cũ-nhất>` → nhận 30 tin cũ hơn
+> - Nếu trả về ít hơn `limit` → đã hết tin nhắn
 
 ---
 
@@ -993,7 +997,15 @@ Gọi API này **ngay sau khi đăng nhập** để đăng ký thiết bị nh�
 
 ### 12.3 `GET /notifications` 🔒 — Lấy danh sách thông báo
 
-Trả về 50 thông báo gần nhất, kèm thông tin người gửi.
+Trả về danh sách thông báo, **mới nhất trước**, hỗ trợ cursor-based pagination.
+
+**Query Parameters:**
+| Param | Type | Mặc định | Mô tả |
+|-------|------|---------|-------|
+| `limit` | int | 20 | Số lượng trả về (tối đa 50) |
+| `before_id` | uuid | - | Lấy thông báo cũ hơn thông báo có ID này |
+
+> **Phân trang:** Lần đầu gọi không cần `before_id`. Khi load thêm, truyền `id` của thông báo **cũ nhất** đang hiển thị vào `before_id`. Nếu trả về ít hơn `limit` → đã hết.
 
 **Response 200:**
 ```json
