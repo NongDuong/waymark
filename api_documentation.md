@@ -38,6 +38,14 @@ Tạo tài khoản mới. Hệ thống tự động tạo hồ sơ cá nhân (Us
   "display_name": "Dương Waymark"
 }
 ```
+
+| Field | Ràng buộc |
+|-------|----------|
+| `email` | Định dạng email hợp lệ, bắt buộc |
+| `username` | 3–30 ký tự, bắt buộc |
+| `password` | 6–128 ký tự, bắt buộc |
+| `display_name` | Tối đa 50 ký tự, tùy chọn |
+
 **Response 200:**
 ```json
 {
@@ -421,19 +429,18 @@ Dùng `multipart/form-data` vì có thể kèm theo ảnh.
 **Request Fields:**
 | Field | Type | Mô tả |
 |-------|------|-------|
-| `caption` | string | Nội dung kỷ niệm (bắt buộc) |
+| `caption` | string | Nội dung kỷ niệm, 1–2000 ký tự (bắt buộc) |
 | `lat` | float | Vĩ độ (bắt buộc) |
 | `lng` | float | Kinh độ (bắt buộc) |
 | `privacy_level` | int | **1**=Riêng tư, **2**=Bạn bè, **3**=Công khai (mặc định 3). Chỉ chấp nhận 1, 2, hoặc 3 — giá trị khác trả về 400. |
 | `mood_code` | string | Trạng thái cảm xúc (tùy chọn) |
 | `place_id` | UUID | ID địa điểm từ hệ thống Places (tùy chọn) |
-| `images` | File[] | Danh sách ảnh đính kèm (tùy chọn). Xem giới hạn bên dưới. |
+| `images` | File[] | Danh sách ảnh đính kèm, tối đa 10 ảnh (tùy chọn). Xem giới hạn bên dưới. |
 
 **Giới hạn ảnh đính kèm:**
-- **Định dạng hỗ trợ:** JPEG, JPG, PNG, WebP, GIF, HEIC, HEIF
-- **Kích thước tối đa mỗi file:** 50MB
-- Upload file sai định dạng → `400 Loại file không hỗ trợ`
-- Upload file quá lớn → `413 File quá lớn`
+- **Số lượng:** Tối đa **10 ảnh** mỗi kỷ niệm — quá giới hạn → `400`
+- **Định dạng hỗ trợ:** JPEG, JPG, PNG, WebP, GIF, HEIC, HEIF — sai định dạng → `400`
+- **Kích thước tối đa mỗi file:** 50MB — quá lớn → `413`
 
 > Sau khi tạo, hệ thống tự động kích hoạt 2 tác vụ nền: **xử lý media** và **reverse geocoding** (tự động điền tên tỉnh/thành, quận/huyện).
 
