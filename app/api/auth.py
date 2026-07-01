@@ -262,12 +262,27 @@ def login_google(google_in: schemas.GoogleLoginRequest, db: Session = Depends(ge
     token = google_in.credential
     try:
         google_client_id = os.getenv("GOOGLE_CLIENT_ID", "")
-        if google_client_id:
+        google_android_client_id = os.getenv("GOOGLE_ANDROID_CLIENT_ID", "")
+        if google_client_id or google_android_client_id:
             from google.oauth2 import id_token as google_id_token
             from google.auth.transport import requests as google_requests
-            payload = google_id_token.verify_oauth2_token(
-                token, google_requests.Request(), google_client_id
-            )
+            
+            # Thử verify với tất cả client IDs có cấu hình (Web + Android)
+            client_ids = [cid for cid in [google_client_id, google_android_client_id] if cid and cid.strip()]
+            payload = None
+            last_error = None
+            for cid in client_ids:
+                try:
+                    payload = google_id_token.verify_oauth2_token(
+                        token, google_requests.Request(), cid
+                    )
+                    break  # Verify thành công, thoát vòng lặp
+                except ValueError as e:
+                    last_error = e
+                    continue  # Thử client ID tiếp theo
+            
+            if payload is None:
+                raise last_error or ValueError("No valid Google client ID configured")
         else:
             # Fallback khi chưa cấu hình GOOGLE_CLIENT_ID (dev only)
             from jose import jwt as jose_jwt
