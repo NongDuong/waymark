@@ -2800,21 +2800,18 @@
             const username = document.getElementById("login-username").value;
             const password = document.getElementById("login-password").value;
 
-            // Prepare URL Encoded Form payload for login
-            const formData = new URLSearchParams();
-            formData.append("username", username);
-            formData.append("password", password);
-
             try {
                 const data = await fetch("/v1/auth/login/password", {
                     method: "POST",
-                    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                    body: formData
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ username, password })
                 });
 
                 if (!data.ok) {
                     const err = await data.json();
-                    throw new Error(err.detail || "Sai thông tin đăng nhập");
+                    // FastAPI validation error trả detail là array, login error trả string
+                    const msg = typeof err.detail === "string" ? err.detail : "Sai thông tin đăng nhập";
+                    throw new Error(msg);
                 }
 
                 const res = await data.json();
