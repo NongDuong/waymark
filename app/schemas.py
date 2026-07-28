@@ -38,10 +38,39 @@ class UserResponse(BaseModel):
     primary_email: EmailStr
     is_admin: bool = False
     is_vip: bool = False
+    subscription_tier: str = "normal"
+    subscription_expires_at: Optional[datetime] = None
     created_at: datetime
     
     class Config:
         from_attributes = True
+
+class PurchaseVerifyRequest(BaseModel):
+    platform: str = Field(pattern="^(apple|google)$")
+    product_id: str = Field(min_length=1, max_length=255)
+    receipt_data: Optional[str] = None
+    purchase_token: Optional[str] = None
+
+class SubscriptionResponse(BaseModel):
+    tier: str
+    product_id: Optional[str] = None
+    platform: Optional[str] = None
+    status: str
+    expires_at: Optional[datetime] = None
+    pin_visibility_days: int
+    can_upload_library_photos: bool
+    can_record_short_video: bool
+    short_video_min_seconds: Optional[int] = None
+    short_video_max_seconds: Optional[int] = None
+    ads_enabled: bool
+
+class SubscriptionPlanResponse(BaseModel):
+    tier: str
+    product_ids: dict
+    pin_visibility_days: int
+    can_upload_library_photos: bool
+    can_record_short_video: bool
+    ads_enabled: bool
 
 # Memory Schemas
 class LocationInput(BaseModel):

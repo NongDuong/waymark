@@ -5,7 +5,7 @@ from . import models
 import redis.asyncio as aioredis
 from fastapi_limiter import FastAPILimiter
 
-from .api import auth, memories, map, social, places, discovery, media, profile, chat, collections, reports, admin
+from .api import auth, memories, map, social, places, discovery, media, profile, chat, collections, reports, admin, subscriptions
 
 # Base.metadata.create_all(bind=engine) # We use alembic instead
 
@@ -27,6 +27,7 @@ app.include_router(chat.router, prefix="/v1/conversations", tags=["chat"])
 app.include_router(collections.router, prefix="/v1/collections", tags=["collections"])
 app.include_router(reports.router, prefix="/v1/reports", tags=["reports"])
 app.include_router(admin.router, prefix="/v1/admin", tags=["admin"])
+app.include_router(subscriptions.router, prefix="/v1/subscriptions", tags=["subscriptions"])
 
 # Initialize Redis pub/sub for WebSocket cross-worker sync on each worker startup
 @app.on_event("startup")

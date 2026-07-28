@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 import uuid
 from typing import List, Optional
+from datetime import datetime, timedelta, timezone
 
 from .. import schemas, models
 from ..database import get_db
@@ -10,6 +11,7 @@ from ..core.dependencies import get_current_user
 from ..worker import process_media, reverse_geocode
 from ..core.rate_limit import memory_limit
 from ..core.upload_validator import validate_image_upload
+from ..core.subscriptions import effective_tier, entitlement
 
 router = APIRouter()
 
@@ -32,6 +34,9 @@ def create_memory(
 
     # Validate image count
     real_images = [img for img in images if img and img.filename]
+    user_entitlement = entitlement(effective_tier(current_user))
+    if real_images and not user_entitlement["can_upload_library_photos"]:
+        raise HTTPException(status_code=403, detail="Tính năng chọn ảnh từ thư viện chỉ dành cho gói cao cấp.")
     if len(real_images) > 10:
         raise HTTPException(status_code=400, detail="Tối đa 10 ảnh mỗi kỷ niệm.")
 
@@ -61,7 +66,8 @@ def create_memory(
         mood_code=mood_code,
         privacy_level=privacy_level,
         place_id=parsed_place_id,
-        location=wkt_point
+        location=wkt_point,
+        visibility_expires_at=datetime.now(timezone.utc) + timedelta(days=user_entitlement["pin_visibility_days"])
     )
     
     db.add(new_memory)

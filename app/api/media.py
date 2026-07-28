@@ -7,10 +7,12 @@ from botocore.exceptions import ClientError
 from botocore.config import Config
 import os
 from pydantic import BaseModel
+from pydantic import Field
 
 from .. import models, schemas
 from ..database import get_db
 from ..core.dependencies import get_current_user
+from ..core.subscriptions import effective_tier
 
 router = APIRouter()
 
@@ -72,6 +74,7 @@ class PresignedUrlRequest(BaseModel):
     filename: str
     content_type: str
     media_type: int = 1 # 1=image, 2=video
+    duration_seconds: Optional[float] = Field(None, ge=0)
 
 class PresignedUrlResponse(BaseModel):
     upload_url: str
@@ -87,6 +90,19 @@ def get_presigned_url(
 ):
     if not s3_client:
         raise HTTPException(status_code=500, detail="R2 is not configured")
+
+    if effective_tier(current_user) != "premium":
+        raise HTTPException(status_code=403, detail="Tải ảnh hoặc video kỷ niệm chỉ dành cho gói cao cấp")
+    if req.media_type not in (1, 2):
+        raise HTTPException(status_code=400, detail="media_type must be 1 (image) or 2 (video)")
+    content_type = req.content_type.lower()
+    if req.media_type == 1 and not content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Invalid image content_type")
+    if req.media_type == 2:
+        if not content_type.startswith("video/"):
+            raise HTTPException(status_code=400, detail="Invalid video content_type")
+        if req.duration_seconds is None or not 5 <= req.duration_seconds <= 10:
+            raise HTTPException(status_code=400, detail="Video ngắn phải có thời lượng từ 5 đến 10 giây")
         
     memory = db.query(models.Memory).filter(models.Memory.id == memory_id).first()
     if not memory or memory.user_id != current_user.id:

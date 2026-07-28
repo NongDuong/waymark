@@ -19,6 +19,7 @@
 10. [Bộ sưu tập (Collections)](#10-bộ-sưu-tập-collections)
 11. [Báo cáo (Reports)](#11-báo-cáo-reports)
 12. [Thông báo & Push Notification (Firebase)](#12-thông-báo--push-notification-firebase)
+13. [In-App Purchase và quyền gói](#13-in-app-purchase-và-quyền-gói)
 
 > **Ký hiệu:** 🔒 = Cần Bearer Token | 🔓 = Không cần Token
 
@@ -1160,4 +1161,112 @@ Hệ thống giới hạn request dựa trên **IP** (auth) hoặc **User ID** (
 |----|---------|
 | `1` | **Riêng tư (Private)** — Chỉ bản thân xem được |
 | `2` | **Bạn bè (Friends)** — Chỉ người follow chéo nhau |
-| `3` | **Công khai (Public)** — Mọi người xem được trong 30 ngày |
+| `3` | **Công khai (Public)** — Hiển thị 30 ngày với gói thường, 365 ngày với Standard/Premium |
+
+---
+
+## 13. IN-APP PURCHASE VÀ QUYỀN GÓI
+
+Hệ thống có ba cấp tài khoản: `normal`, `standard`, `premium`. Quyền được xác định phía server từ giao dịch đã xác thực; app không được tự lưu/cấp gói ở local storage.
+
+### `GET /subscriptions/plans` 🔓 — Danh sách gói
+
+Trả danh sách quyền và product ID tương ứng trên Apple/Google. Không yêu cầu đăng nhập.
+
+### `GET /subscriptions/me` 🔒 — Kiểm tra gói của user hiện tại
+
+**Header:** `Authorization: Bearer <access_token>`
+
+Server xác định user từ access token, không cần truyền `user_id`. Kết quả luôn phản ánh gói đang có hiệu lực; gói hết hạn được trả về như `normal`. App dùng `ads_enabled` để quyết định hiển thị quảng cáo.
+
+```json
+{
+  "tier": "premium",
+  "product_id": "waymark.premium.yearly",
+  "platform": "apple",
+  "status": "active",
+  "expires_at": "2027-07-28T10:00:00Z",
+  "pin_visibility_days": 365,
+  "can_upload_library_photos": true,
+  "can_record_short_video": true,
+  "short_video_min_seconds": 5,
+  "short_video_max_seconds": 10,
+  "ads_enabled": false
+}
+```
+
+Response tài khoản thường:
+
+```json
+{
+  "tier": "normal",
+  "product_id": null,
+  "platform": null,
+  "status": "inactive",
+  "expires_at": null,
+  "pin_visibility_days": 30,
+  "can_upload_library_photos": false,
+  "can_record_short_video": false,
+  "short_video_min_seconds": null,
+  "short_video_max_seconds": null,
+  "ads_enabled": true
+}
+```
+
+### `POST /subscriptions/verify` 🔒 — Xác thực hoặc khôi phục giao dịch
+
+Xác thực giao dịch trực tiếp với App Store hoặc Google Play rồi cập nhật quyền của tài khoản. Với Apple gửi `receipt_data`; với Google gửi `purchase_token`.
+
+Apple request:
+
+```json
+{
+  "platform": "apple",
+  "product_id": "waymark.premium.yearly",
+  "receipt_data": "base64-app-store-receipt"
+}
+```
+
+Google Play request:
+
+```json
+{
+  "platform": "google",
+  "product_id": "waymark.standard.yearly",
+  "purchase_token": "google-play-purchase-token"
+}
+```
+
+Response giống `GET /subscriptions/me`. Một transaction không thể gán cho hai tài khoản; trường hợp này trả `409`.
+
+Các lỗi thường gặp:
+
+| HTTP | `detail`/ý nghĩa |
+|---:|---|
+| 400 | Product ID không hợp lệ, receipt/token sai hoặc gói đã hết hạn |
+| 401 | Thiếu hoặc sai access token |
+| 409 | Giao dịch đã thuộc tài khoản khác |
+| 502/503 | Không gọi được store hoặc Google Play chưa được cấu hình |
+
+Biến môi trường cần cấu hình: `APPLE_IAP_SHARED_SECRET`, `GOOGLE_PLAY_PACKAGE_NAME`, `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON`. Có thể đổi product ID mặc định qua `IAP_STANDARD_IOS_PRODUCT_ID`, `IAP_PREMIUM_IOS_PRODUCT_ID`, `IAP_STANDARD_ANDROID_PRODUCT_ID`, `IAP_PREMIUM_ANDROID_PRODUCT_ID`.
+
+Quyền hiện tại:
+
+| Gói | Pin trên bản đồ | Ảnh thư viện | Video ngắn | Quảng cáo |
+|---|---:|---:|---:|---:|
+| normal | 30 ngày | Không | Không | Có |
+| standard | 365 ngày | Không | Không | Có |
+| premium | 365 ngày | Có | 5–10 giây | Không |
+
+Khi tạo kỷ niệm qua `POST /memories`, server tự đặt `visibility_expires_at` theo gói; client không được truyền số ngày. Với Premium, API `POST /memories/{memory_id}/media/upload-url` chấp nhận ảnh (`media_type=1`) hoặc video (`media_type=2`). Video phải gửi thêm `duration_seconds` trong khoảng `5` đến `10`.
+
+Ví dụ xin URL upload video Premium:
+
+```json
+{
+  "filename": "short-memory.mp4",
+  "content_type": "video/mp4",
+  "media_type": 2,
+  "duration_seconds": 8
+}
+```
