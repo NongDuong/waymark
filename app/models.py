@@ -20,8 +20,8 @@ class User(Base):
     last_login_at = Column(DateTime(timezone=True), nullable=True)
     permissions = Column(JSONB, nullable=True, default=dict)
     is_vip = Column(Boolean, default=False, nullable=False, server_default="false")
-    subscription_tier = Column(String(20), default="normal", nullable=False, server_default="normal")
-    subscription_expires_at = Column(DateTime(timezone=True), nullable=True)
+    package_id = Column(String(30), nullable=True)
+    package_expires_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -137,21 +137,6 @@ class Media(Base):
     file_url = Column(String(500))
     thumbnail_url = Column(String(500), nullable=True)
     status = Column(SmallInteger, default=1) # 1=pending, 2=processed
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
-
-class InAppPurchase(Base):
-    __tablename__ = "in_app_purchases"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
-    platform = Column(String(20), nullable=False)  # apple | google
-    product_id = Column(String(255), nullable=False)
-    transaction_id = Column(String(255), nullable=False, unique=True)
-    status = Column(String(20), nullable=False, default="active")
-    purchased_at = Column(DateTime(timezone=True), nullable=True)
-    expires_at = Column(DateTime(timezone=True), nullable=False)
-    raw_verification = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 

@@ -11,7 +11,7 @@ from ..core.dependencies import get_current_user
 from ..worker import process_media, reverse_geocode
 from ..core.rate_limit import memory_limit
 from ..core.upload_validator import validate_image_upload
-from ..core.subscriptions import effective_tier, entitlement
+from ..core.subscriptions import effective_package, entitlement
 
 router = APIRouter()
 
@@ -34,7 +34,13 @@ def create_memory(
 
     # Validate image count
     real_images = [img for img in images if img and img.filename]
-    user_entitlement = entitlement(effective_tier(current_user))
+    active_package = effective_package(current_user)
+    user_entitlement = entitlement(active_package)
+    visibility_expires_at = (
+        current_user.package_expires_at
+        if active_package
+        else datetime.now(timezone.utc) + timedelta(days=user_entitlement["pin_visibility_days"])
+    )
     if real_images and not user_entitlement["can_upload_library_photos"]:
         raise HTTPException(status_code=403, detail="Tính năng chọn ảnh từ thư viện chỉ dành cho gói cao cấp.")
     if len(real_images) > 10:
@@ -67,7 +73,7 @@ def create_memory(
         privacy_level=privacy_level,
         place_id=parsed_place_id,
         location=wkt_point,
-        visibility_expires_at=datetime.now(timezone.utc) + timedelta(days=user_entitlement["pin_visibility_days"])
+        visibility_expires_at=visibility_expires_at
     )
     
     db.add(new_memory)

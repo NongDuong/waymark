@@ -9,6 +9,7 @@ from .. import schemas, models
 from ..database import get_db
 from ..core import security
 from ..core.dependencies import get_current_user
+from ..core.subscriptions import effective_package
 from ..core.rate_limit import signup_limit, login_limit, forgot_pwd_limit
 
 router = APIRouter()
@@ -131,7 +132,11 @@ def refresh_token(body: schemas.RefreshTokenRequest, db: Session = Depends(get_d
 
 @router.get("/me", response_model=schemas.UserResponse)
 def get_me(current_user: models.User = Depends(get_current_user)):
-    return current_user
+    response = schemas.UserResponse.model_validate(current_user)
+    if not effective_package(current_user):
+        response.package_id = None
+        response.package_expires_at = None
+    return response
 
 @router.get("/config")
 def get_auth_config():

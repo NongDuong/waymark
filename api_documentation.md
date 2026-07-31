@@ -19,7 +19,7 @@
 10. [Bộ sưu tập (Collections)](#10-bộ-sưu-tập-collections)
 11. [Báo cáo (Reports)](#11-báo-cáo-reports)
 12. [Thông báo & Push Notification (Firebase)](#12-thông-báo--push-notification-firebase)
-13. [In-App Purchase và quyền gói](#13-in-app-purchase-và-quyền-gói)
+13. [Gói dịch vụ và quyền lợi](#13-gói-dịch-vụ-và-quyền-lợi)
 
 > **Ký hiệu:** 🔒 = Cần Bearer Token | 🔓 = Không cần Token
 
@@ -1165,32 +1165,35 @@ Hệ thống giới hạn request dựa trên **IP** (auth) hoặc **User ID** (
 
 ---
 
-## 13. IN-APP PURCHASE VÀ QUYỀN GÓI
+## 13. GÓI DỊCH VỤ VÀ QUYỀN LỢI
 
-Hệ thống có ba cấp tài khoản: `normal`, `standard`, `premium`. Quyền được xác định phía server từ giao dịch đã xác thực; app không được tự lưu/cấp gói ở local storage.
+Frontend tự xử lý thanh toán. Sau khi thanh toán thành công, frontend gửi ID gói cho backend để kích hoạt. Backend quản lý thời hạn và áp dụng giới hạn tương ứng.
 
-### `GET /subscriptions/plans` 🔓 — Danh sách gói
+Hai ID hợp lệ là `standard_package` và `premium_package`.
 
-Trả danh sách quyền và product ID tương ứng trên Apple/Google. Không yêu cầu đăng nhập.
+### `GET /subscriptions/packages` 🔓 — Danh sách gói
+
+Trả danh sách ID và quyền lợi của các gói. Không yêu cầu đăng nhập.
 
 ### `GET /subscriptions/me` 🔒 — Kiểm tra gói của user hiện tại
 
 **Header:** `Authorization: Bearer <access_token>`
 
-Server xác định user từ access token, không cần truyền `user_id`. Kết quả luôn phản ánh gói đang có hiệu lực; gói hết hạn được trả về như `normal`. App dùng `ads_enabled` để quyết định hiển thị quảng cáo.
+Server xác định user từ access token, không cần truyền `user_id`.
 
 ```json
 {
-  "tier": "premium",
-  "product_id": "waymark.premium.yearly",
-  "platform": "apple",
+  "package_id": "premium_package",
   "status": "active",
   "expires_at": "2027-07-28T10:00:00Z",
+  "benefits": [
+    "Lưu kỷ niệm 1 năm trên bản đồ",
+    "Tải lên hình ảnh và video từ thư viện",
+    "Không có quảng cáo"
+  ],
   "pin_visibility_days": 365,
   "can_upload_library_photos": true,
-  "can_record_short_video": true,
-  "short_video_min_seconds": 5,
-  "short_video_max_seconds": 10,
+  "can_upload_library_videos": true,
   "ads_enabled": false
 }
 ```
@@ -1199,66 +1202,47 @@ Response tài khoản thường:
 
 ```json
 {
-  "tier": "normal",
-  "product_id": null,
-  "platform": null,
+  "package_id": null,
   "status": "inactive",
   "expires_at": null,
+  "benefits": [],
   "pin_visibility_days": 30,
   "can_upload_library_photos": false,
-  "can_record_short_video": false,
-  "short_video_min_seconds": null,
-  "short_video_max_seconds": null,
+  "can_upload_library_videos": false,
   "ads_enabled": true
 }
 ```
 
-### `POST /subscriptions/verify` 🔒 — Xác thực hoặc khôi phục giao dịch
+API `GET /auth/me` cũng trả `package_id` và `package_expires_at` trong thông tin user. Khi gói hết hạn, hai trường này được trả về `null`.
 
-Xác thực giao dịch trực tiếp với App Store hoặc Google Play rồi cập nhật quyền của tài khoản. Với Apple gửi `receipt_data`; với Google gửi `purchase_token`.
+### `POST /subscriptions/activate` 🔒 — Kích hoạt gói
 
-Apple request:
-
-```json
-{
-  "platform": "apple",
-  "product_id": "waymark.premium.yearly",
-  "receipt_data": "base64-app-store-receipt"
-}
-```
-
-Google Play request:
+Frontend gọi API này sau khi đã xử lý thanh toán thành công.
 
 ```json
 {
-  "platform": "google",
-  "product_id": "waymark.standard.yearly",
-  "purchase_token": "google-play-purchase-token"
+  "package_id": "premium_package"
 }
 ```
 
-Response giống `GET /subscriptions/me`. Một transaction không thể gán cho hai tài khoản; trường hợp này trả `409`.
+Response giống `GET /subscriptions/me`. Standard có hiệu lực 30 ngày, Premium có hiệu lực 365 ngày. Khi kích hoạt, backend đặt lại `visibility_expires_at` của tất cả memory chưa xóa thuộc user bằng đúng ngày hết hạn gói. Memory được tạo trong thời gian sử dụng gói cũng chỉ được pin đến ngày hết hạn chung này.
 
 Các lỗi thường gặp:
 
 | HTTP | `detail`/ý nghĩa |
 |---:|---|
-| 400 | Product ID không hợp lệ, receipt/token sai hoặc gói đã hết hạn |
+| 422 | `package_id` không phải `premium_package` hoặc `standard_package` |
 | 401 | Thiếu hoặc sai access token |
-| 409 | Giao dịch đã thuộc tài khoản khác |
-| 502/503 | Không gọi được store hoặc Google Play chưa được cấu hình |
-
-Biến môi trường cần cấu hình: `APPLE_IAP_SHARED_SECRET`, `GOOGLE_PLAY_PACKAGE_NAME`, `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON`. Có thể đổi product ID mặc định qua `IAP_STANDARD_IOS_PRODUCT_ID`, `IAP_PREMIUM_IOS_PRODUCT_ID`, `IAP_STANDARD_ANDROID_PRODUCT_ID`, `IAP_PREMIUM_ANDROID_PRODUCT_ID`.
 
 Quyền hiện tại:
 
-| Gói | Pin trên bản đồ | Ảnh thư viện | Video ngắn | Quảng cáo |
-|---|---:|---:|---:|---:|
-| normal | 30 ngày | Không | Không | Có |
-| standard | 365 ngày | Không | Không | Có |
-| premium | 365 ngày | Có | 5–10 giây | Không |
+| Gói | Kỷ niệm trên bản đồ | Ảnh/video thư viện | Quảng cáo |
+|---|---:|---:|---:|
+| Không có gói | 30 ngày | Không | Có |
+| `standard_package` | 30 ngày | Không | Không |
+| `premium_package` | 365 ngày | Có | Không |
 
-Khi tạo kỷ niệm qua `POST /memories`, server tự đặt `visibility_expires_at` theo gói; client không được truyền số ngày. Với Premium, API `POST /memories/{memory_id}/media/upload-url` chấp nhận ảnh (`media_type=1`) hoặc video (`media_type=2`). Video phải gửi thêm `duration_seconds` trong khoảng `5` đến `10`.
+Khi tạo kỷ niệm qua `POST /memories`, server tự đặt `visibility_expires_at` theo gói; client không được truyền số ngày. Chỉ `premium_package` được tải ảnh hoặc video từ thư viện.
 
 Ví dụ xin URL upload video Premium:
 
