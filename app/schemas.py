@@ -17,20 +17,25 @@ class UserCreate(BaseModel):
     username: str = Field(min_length=3, max_length=30)
     password: str = Field(min_length=6, max_length=128)
     display_name: Optional[str] = Field(None, max_length=50)
+    language_code: Optional[str] = Field(None, min_length=2, max_length=10)
 
 class GoogleLoginRequest(BaseModel):
     credential: str
+    language_code: Optional[str] = Field(None, min_length=2, max_length=10)
 
 class FacebookLoginRequest(BaseModel):
     access_token: str
+    language_code: Optional[str] = Field(None, min_length=2, max_length=10)
 
 class AppleLoginRequest(BaseModel):
     id_token: str
     display_name: Optional[str] = None
+    language_code: Optional[str] = Field(None, min_length=2, max_length=10)
 
 class LoginRequest(BaseModel):
     username: str  # username hoặc email
     password: str
+    language_code: Optional[str] = Field(None, min_length=2, max_length=10)
 
 class UserResponse(BaseModel):
     id: UUID
@@ -40,6 +45,7 @@ class UserResponse(BaseModel):
     is_vip: bool = False
     package_id: Optional[str] = None
     package_expires_at: Optional[datetime] = None
+    language_code: Optional[str] = None
     created_at: datetime
     
     class Config:

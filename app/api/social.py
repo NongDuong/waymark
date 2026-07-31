@@ -34,7 +34,7 @@ def like_memory(
         sender_name = (sender_profile.display_name if sender_profile else None) or current_user.username
         send_notification.delay(
             str(memory.user_id),
-            f"{sender_name} đã thích kỷ niệm của bạn.",
+            sender_name=sender_name,
             sender_id=str(current_user.id),
             notification_type=1,
             reference_id=str(memory_id)
@@ -155,7 +155,7 @@ def add_comment(
         sender_name = (sender_profile.display_name if sender_profile else None) or current_user.username
         send_notification.delay(
             str(memory.user_id),
-            f"{sender_name} đã bình luận về kỷ niệm của bạn.",
+            sender_name=sender_name,
             sender_id=str(current_user.id),
             notification_type=2,
             reference_id=str(memory_id)
@@ -355,7 +355,7 @@ def follow_user(
     sender_name = (sender_profile.display_name if sender_profile else None) or current_user.username
     send_notification.delay(
         str(follow_in.target_user_id),
-        f"{sender_name} đã bắt đầu theo dõi bạn.",
+        sender_name=sender_name,
         sender_id=str(current_user.id),
         notification_type=3,
         reference_id=str(current_user.id)

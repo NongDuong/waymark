@@ -62,36 +62,47 @@ def process_media(memory_id: str):
     print(f"Media processing for memory {memory_id} completed.")
     return True
 
-_NOTIFICATION_TITLES = {
-    1: "Lượt thích mới",
-    2: "Bình luận mới",
-    3: "Người theo dõi mới",
-    4: "Tin nhắn mới",
-}
-
 @celery_app.task(name="tasks.send_notification")
 def send_notification(
     user_id: str,
-    message: str,
+    message: str = None,
     sender_id: str = None,
     notification_type: int = 1,
-    reference_id: str = None
+    reference_id: str = None,
+    sender_name: str = None,
 ):
-    print(f"Sending notification to user {user_id}: {message}")
-
     from app.database import SessionLocal
-    from app.models import Notification, DeviceToken
+    from app.models import Notification, DeviceToken, User, UserProfile
+    from app.core.notification_i18n import localize_notification
     import uuid as uuid_mod
 
     db = SessionLocal()
     try:
+        recipient_uuid = uuid_mod.UUID(user_id)
+        recipient = db.query(User).filter(User.id == recipient_uuid).first()
+        language_code = recipient.language_code if recipient else None
+
+        if not sender_name and sender_id:
+            sender_uuid = uuid_mod.UUID(sender_id)
+            sender_profile = db.query(UserProfile).filter(UserProfile.user_id == sender_uuid).first()
+            sender = db.query(User).filter(User.id == sender_uuid).first()
+            sender_name = (
+                (sender_profile.display_name if sender_profile else None)
+                or (sender.username if sender else None)
+            )
+        sender_name = sender_name or "Someone"
+        title, localized_message = localize_notification(
+            language_code, notification_type, sender_name
+        )
+        print(f"Sending {language_code or 'en'} notification to user {user_id}: {localized_message}")
+
         # 1. Save notification record to DB
         notif = Notification(
             id=uuid_mod.uuid4(),
-            user_id=uuid_mod.UUID(user_id),
+            user_id=recipient_uuid,
             sender_id=uuid_mod.UUID(sender_id) if sender_id else None,
             notification_type=notification_type,
-            message=message,
+            message=localized_message,
             reference_id=uuid_mod.UUID(reference_id) if reference_id else None,
             is_read=False
         )
@@ -101,14 +112,13 @@ def send_notification(
 
         # 2. Send FCM push notifications to all device tokens of the recipient
         device_tokens = db.query(DeviceToken).filter(
-            DeviceToken.user_id == uuid_mod.UUID(user_id)
+            DeviceToken.user_id == recipient_uuid
         ).all()
 
         if not device_tokens:
             print(f"No device tokens registered for user {user_id}, skipping FCM.")
             return True
 
-        title = _NOTIFICATION_TITLES.get(notification_type, "Thông báo mới")
         data_payload = {
             "notification_type": str(notification_type),
             "reference_id": reference_id or "",
@@ -119,7 +129,7 @@ def send_notification(
         for dt in device_tokens:
             try:
                 msg = fb_messaging.Message(
-                    notification=fb_messaging.Notification(title=title, body=message),
+                    notification=fb_messaging.Notification(title=title, body=localized_message),
                     data=data_payload,
                     token=dt.token,
                 )

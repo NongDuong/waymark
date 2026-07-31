@@ -61,9 +61,13 @@ Tạo tài khoản mới. Hệ thống tự động tạo hồ sơ cá nhân (Us
 ### `POST /auth/login/password` — Đăng nhập bằng Email & Mật khẩu
 Dùng `username` hoặc `email` đều được.
 
-**Request:** `application/x-www-form-urlencoded`
-```
-username=duongwaymark&password=SecurePassword123
+**Request Body (JSON):**
+```json
+{
+  "username": "duongwaymark",
+  "password": "SecurePassword123",
+  "language_code": "vi"
+}
 ```
 **Response 200:**
 ```json
@@ -84,7 +88,7 @@ Gửi `credential` (ID Token) nhận được từ Google Sign-In SDK trên App.
 
 **Request Body (JSON):**
 ```json
-{ "credential": "<google_id_token>" }
+{ "credential": "<google_id_token>", "language_code": "en" }
 ```
 **Response 200:** Trả về JWT token tương tự login thông thường (bao gồm `access_token`, `refresh_token`, `token_type`, `user_id`).
 
@@ -98,7 +102,7 @@ Gửi `access_token` nhận được từ Facebook Login SDK.
 
 **Request Body (JSON):**
 ```json
-{ "access_token": "<facebook_access_token>" }
+{ "access_token": "<facebook_access_token>", "language_code": "fr" }
 ```
 
 ---
@@ -108,8 +112,10 @@ Gửi `id_token` từ Sign in with Apple SDK.
 
 **Request Body (JSON):**
 ```json
-{ "id_token": "<apple_id_token>", "display_name": "Tên hiển thị (chỉ lần đầu)" }
+{ "id_token": "<apple_id_token>", "display_name": "Tên hiển thị (chỉ lần đầu)", "language_code": "ja" }
 ```
+
+Các endpoint đăng nhập lưu `language_code` vào tài khoản để backend tạo thông báo theo ngôn ngữ người nhận. Các mã được hỗ trợ: `de`, `en`, `es`, `fr`, `hi`, `id`, `it`, `ja`, `ko`, `pt`, `vi`. Mã không được hỗ trợ sẽ dùng tiếng Anh.
 
 ---
 

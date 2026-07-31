@@ -22,6 +22,7 @@ class User(Base):
     is_vip = Column(Boolean, default=False, nullable=False, server_default="false")
     package_id = Column(String(30), nullable=True)
     package_expires_at = Column(DateTime(timezone=True), nullable=True)
+    language_code = Column(String(10), nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 

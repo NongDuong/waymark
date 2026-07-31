@@ -11,8 +11,17 @@ from ..core import security
 from ..core.dependencies import get_current_user
 from ..core.subscriptions import effective_package
 from ..core.rate_limit import signup_limit, login_limit, forgot_pwd_limit
+from ..core.notification_i18n import normalize_language_code
 
 router = APIRouter()
+
+
+def _save_login_language(db: Session, user: models.User, language_code: str | None) -> None:
+    if language_code is None:
+        return
+    user.language_code = normalize_language_code(language_code)
+    db.commit()
+
 
 @router.post("/signup/email", response_model=schemas.UserResponse)
 def signup(user_in: schemas.UserCreate, db: Session = Depends(get_db), _rl: None = Depends(signup_limit)):
@@ -40,7 +49,8 @@ def signup(user_in: schemas.UserCreate, db: Session = Depends(get_db), _rl: None
         id=uuid.uuid4(),
         primary_email=user_in.email,
         username=user_in.username,
-        hashed_password=hashed_password
+        hashed_password=hashed_password,
+        language_code=normalize_language_code(user_in.language_code) if user_in.language_code else None,
     )
     db.add(new_user)
     
@@ -79,7 +89,9 @@ def login(login_in: schemas.LoginRequest, db: Session = Depends(get_db), _rl: No
     # Verify password
     if not user or not user.hashed_password or not security.verify_password(login_in.password, user.hashed_password):
         raise HTTPException(status_code=400, detail="Incorrect email or password")
-        
+
+    _save_login_language(db, user, login_in.language_code)
+
     access_token_expires = timedelta(minutes=security.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = security.create_access_token(
         data={"sub": str(user.id)}, expires_delta=access_token_expires
@@ -348,7 +360,9 @@ def login_google(google_in: schemas.GoogleLoginRequest, db: Session = Depends(ge
         db.add(profile)
         db.commit()
         db.refresh(user)
-        
+
+    _save_login_language(db, user, google_in.language_code)
+
     # Issue JWT access token + refresh token
     access_token_expires = timedelta(minutes=security.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = security.create_access_token(
@@ -446,7 +460,9 @@ def login_facebook(fb_in: schemas.FacebookLoginRequest, db: Session = Depends(ge
         db.add(profile)
         db.commit()
         db.refresh(user)
-        
+
+    _save_login_language(db, user, fb_in.language_code)
+
     # Issue JWT access token + refresh token
     access_token_expires = timedelta(minutes=security.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = security.create_access_token(
@@ -538,7 +554,9 @@ def login_apple(apple_in: schemas.AppleLoginRequest, db: Session = Depends(get_d
         db.add(profile)
         db.commit()
         db.refresh(user)
-        
+
+    _save_login_language(db, user, apple_in.language_code)
+
     # Issue JWT access token + refresh token
     access_token_expires = timedelta(minutes=security.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = security.create_access_token(
