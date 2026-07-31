@@ -17,13 +17,21 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     op.alter_column("users", "subscription_tier", new_column_name="package_id")
     op.alter_column("users", "subscription_expires_at", new_column_name="package_expires_at")
+    # Existing `normal` users become NULL below, so remove NOT NULL/default first.
+    op.alter_column(
+        "users",
+        "package_id",
+        existing_type=sa.String(20),
+        type_=sa.String(30),
+        nullable=True,
+        server_default=None,
+    )
     op.execute(
         "UPDATE users SET package_id = CASE "
         "WHEN package_id = 'premium' THEN 'premium_package' "
         "WHEN package_id = 'standard' THEN 'standard_package' "
         "ELSE NULL END"
     )
-    op.alter_column("users", "package_id", existing_type=sa.String(20), type_=sa.String(30), nullable=True, server_default=None)
     op.drop_table("in_app_purchases")
 
 
