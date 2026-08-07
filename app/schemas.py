@@ -58,6 +58,7 @@ class SubscriptionResponse(BaseModel):
     package_id: Optional[str] = None
     status: str
     expires_at: Optional[datetime] = None
+    remaining_days: int
     benefits: List[str]
     pin_visibility_days: int
     can_upload_library_photos: bool

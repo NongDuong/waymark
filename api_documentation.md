@@ -1219,7 +1219,7 @@ Response tài khoản thường:
 }
 ```
 
-API `GET /auth/me` cũng trả `package_id` và `package_expires_at` trong thông tin user. Khi gói hết hạn, hai trường này được trả về `null`.
+API `GET /auth/me` cũng trả `package_id` và `package_expires_at` trong thông tin user. Khi gói hết hạn, hai trường này được trả về `null`. API `GET /subscriptions/me` trả thêm `remaining_days` (làm tròn lên theo mỗi 24 giờ còn lại) để client hiển thị số ngày thực tế. Gọi lại `POST /subscriptions/activate` với cùng một gói đang hoạt động không gia hạn lại ngày hết hạn.
 
 ### `POST /subscriptions/activate` 🔒 — Kích hoạt gói
 
@@ -1248,7 +1248,7 @@ Quyền hiện tại:
 | `standard_package` | 30 ngày | Không | Không |
 | `premium_package` | 365 ngày | Có | Không |
 
-Khi tạo kỷ niệm qua `POST /memories`, server tự đặt `visibility_expires_at` theo gói; client không được truyền số ngày. Chỉ `premium_package` được tải ảnh hoặc video từ thư viện.
+Khi tạo kỷ niệm qua `POST /memories`, server tự đặt `visibility_expires_at` theo gói; client không được truyền số ngày. Quyền chọn ảnh hoặc video từ thư viện được kiểm soát ở client; backend không từ chối file upload dựa trên gói vì payload upload không thể hiện nguồn file.
 
 Ví dụ xin URL upload video Premium:
 

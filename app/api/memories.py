@@ -41,8 +41,6 @@ def create_memory(
         if active_package
         else datetime.now(timezone.utc) + timedelta(days=user_entitlement["pin_visibility_days"])
     )
-    if real_images and not user_entitlement["can_upload_library_photos"]:
-        raise HTTPException(status_code=403, detail="Tính năng chọn ảnh từ thư viện chỉ dành cho gói cao cấp.")
     if len(real_images) > 10:
         raise HTTPException(status_code=400, detail="Tối đa 10 ảnh mỗi kỷ niệm.")
 

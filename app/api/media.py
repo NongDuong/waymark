@@ -12,7 +12,6 @@ from pydantic import Field
 from .. import models, schemas
 from ..database import get_db
 from ..core.dependencies import get_current_user
-from ..core.subscriptions import effective_package
 
 router = APIRouter()
 
@@ -91,8 +90,6 @@ def get_presigned_url(
     if not s3_client:
         raise HTTPException(status_code=500, detail="R2 is not configured")
 
-    if effective_package(current_user) != "premium_package":
-        raise HTTPException(status_code=403, detail="Tải ảnh hoặc video kỷ niệm chỉ dành cho gói cao cấp")
     if req.media_type not in (1, 2):
         raise HTTPException(status_code=400, detail="media_type must be 1 (image) or 2 (video)")
     content_type = req.content_type.lower()
